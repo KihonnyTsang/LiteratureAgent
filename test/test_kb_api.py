@@ -30,6 +30,7 @@ def make_status(
         pending_new=0,
         pending_modified=0,
         pending_deleted=0,
+        pending_moved=0,
         pending_hash_backfill=0,
         sync_required=False,
     )
@@ -80,6 +81,13 @@ def test_kb_status_api():
 
     assert (
         payload[
+            "pending_moved"
+        ]
+        == 0
+    )
+
+    assert (
+        payload[
             "sync_required"
         ]
         is False
@@ -93,7 +101,8 @@ def test_kb_sync_api():
             new_documents=1,
             modified_documents=0,
             deleted_documents=0,
-            unchanged_documents=8,
+            moved_documents=1,
+            unchanged_documents=7,
             hash_backfilled=0,
 
             new_chunks=12,
@@ -117,6 +126,7 @@ def test_kb_sync_api():
                     pending_modified=0,
                     pending_deleted=0,
                     pending_hash_backfill=0,
+                    pending_moved=0,
 
                     sync_required=False,
                 )
@@ -147,6 +157,13 @@ def test_kb_sync_api():
     assert (
         payload[
             "new_documents"
+        ]
+        == 1
+    )
+
+    assert (
+        payload[
+            "moved_documents"
         ]
         == 1
     )

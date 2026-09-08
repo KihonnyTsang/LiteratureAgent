@@ -672,6 +672,8 @@ def render_sidebar(
                     f"{kb_status.get('pending_new', 0)}"
                     " · 待修改 "
                     f"{kb_status.get('pending_modified', 0)}"
+                    " · 待移动 "
+                    f"{kb_status.get('pending_moved', 0)}"
                     " · 待删除 "
                     f"{kb_status.get('pending_deleted', 0)}"
                 )
@@ -794,6 +796,8 @@ def render_sidebar(
                 f"**{last_sync.get('new_documents', 0)}**"
                 " · 修改 "
                 f"**{last_sync.get('modified_documents', 0)}**"
+                " · 移动 "
+                f"**{last_sync.get('moved_documents', 0)}**"
                 " · 删除 "
                 f"**{last_sync.get('deleted_documents', 0)}**"
             )

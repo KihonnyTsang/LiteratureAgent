@@ -14,6 +14,7 @@ from app.ingestion.chunker import (
     build_chunks_for_all_pages,
 )
 from app.ingestion.kb_sync import (
+    deduplicate_disk_documents,
     scan_papers_folder,
     sync_knowledge_base,
 )
@@ -23,17 +24,12 @@ from app.vectorstore.vector_store import (
     init_collection,
 )
 
-
-PROJECT_ROOT = (
-    Path(__file__)
-    .resolve()
-    .parents[2]
+from app.config import (
+    get_papers_folder,
 )
 
 PAPERS_FOLDER = (
-    PROJECT_ROOT
-    / "data"
-    / "papers"
+    get_papers_folder()
 )
 
 _SYNC_LOCK = Lock()
@@ -66,6 +62,7 @@ class KnowledgeBaseStatus:
     pending_new: int
     pending_modified: int
     pending_deleted: int
+    pending_moved: int
     pending_hash_backfill: int
 
     sync_required: bool
@@ -80,6 +77,7 @@ class KnowledgeBaseUpdateResult:
     new_documents: int
     modified_documents: int
     deleted_documents: int
+    moved_documents: int
     unchanged_documents: int
     hash_backfilled: int
 
@@ -200,31 +198,55 @@ def _get_vector_count() -> int:
 def get_knowledge_base_status(
 ) -> KnowledgeBaseStatus:
     """
-    检查：
+    检查当前 PDF Library、SQLite 和 Qdrant
+    的知识库生命周期状态。
 
-    data/papers
-    SQLite
-    Qdrant
+    状态语义与 sync_knowledge_base 一致：
 
-    当前状态。
+    same path + same hash
+        -> UNCHANGED
 
-    这里只检测，不执行同步。
+    same path + different hash
+        -> MODIFIED
+
+    different path + unique same hash
+        -> MOVED
+
+    unmatched disk
+        -> NEW
+
+    unmatched database
+        -> DELETED
+
+    exact duplicate physical PDFs
+    会先按 content_hash 折叠为逻辑唯一文档。
     """
 
     init_db()
 
     # ========================================================
-    # 1. data/papers
+    # 1. Physical PDF Library
     # ========================================================
 
-    disk_documents = (
+    raw_disk_documents = (
         scan_papers_folder(
             PAPERS_FOLDER
         )
     )
 
     # ========================================================
-    # 2. SQLite documents
+    # 2. Exact-content deduplication
+    # ========================================================
+
+    (
+        disk_documents,
+        _duplicate_groups,
+    ) = deduplicate_disk_documents(
+        raw_disk_documents
+    )
+
+    # ========================================================
+    # 3. SQLite documents
     # ========================================================
 
     database_documents = {
@@ -243,30 +265,21 @@ def get_knowledge_base_status(
     )
 
     # ========================================================
-    # 3. NEW / DELETED
+    # 4. Same path:
+    #
+    # UNCHANGED / MODIFIED / hash backfill
     # ========================================================
 
-    pending_new = len(
-        disk_paths
-        - database_paths
-    )
-
-    pending_deleted = len(
-        database_paths
-        - disk_paths
-    )
-
-    # ========================================================
-    # 4. MODIFIED / legacy hash
-    # ========================================================
-
-    pending_modified = 0
-
-    pending_hash_backfill = 0
-
-    for local_path in (
+    common_paths = (
         disk_paths
         & database_paths
+    )
+
+    pending_modified = 0
+    pending_hash_backfill = 0
+
+    for local_path in sorted(
+        common_paths
     ):
 
         disk_hash = (
@@ -289,7 +302,9 @@ def get_knowledge_base_status(
 
             pending_hash_backfill += 1
 
-        elif (
+            continue
+
+        if (
             database_hash
             != disk_hash
         ):
@@ -297,7 +312,166 @@ def get_knowledge_base_status(
             pending_modified += 1
 
     # ========================================================
-    # 5. SQLite counts
+    # 5. Different paths:
+    #
+    # may be MOVED
+    # ========================================================
+
+    unmatched_database_paths = (
+        database_paths
+        - disk_paths
+    )
+
+    unmatched_disk_paths = (
+        disk_paths
+        - database_paths
+    )
+
+    # ========================================================
+    # 6. Build hash buckets
+    # ========================================================
+
+    database_hash_buckets: dict[
+        str,
+        list[str],
+    ] = {}
+
+    for local_path in (
+        unmatched_database_paths
+    ):
+
+        document = (
+            database_documents[
+                local_path
+            ]
+        )
+
+        content_hash = (
+            document.get(
+                "content_hash"
+            )
+        )
+
+        if not content_hash:
+
+            continue
+
+        database_hash_buckets.setdefault(
+            content_hash,
+            [],
+        ).append(
+            local_path
+        )
+
+    disk_hash_buckets: dict[
+        str,
+        list[str],
+    ] = {}
+
+    for local_path in (
+        unmatched_disk_paths
+    ):
+
+        document = (
+            disk_documents[
+                local_path
+            ]
+        )
+
+        content_hash = (
+            document.get(
+                "content_hash"
+            )
+        )
+
+        if not content_hash:
+
+            continue
+
+        disk_hash_buckets.setdefault(
+            content_hash,
+            [],
+        ).append(
+            local_path
+        )
+
+    # ========================================================
+    # 7. MOVED
+    #
+    # 只有双方 hash 都唯一时才自动认定为 MOVED。
+    # duplicate ambiguity 不做猜测。
+    # ========================================================
+
+    moved_database_paths: set[
+        str
+    ] = set()
+
+    moved_disk_paths: set[
+        str
+    ] = set()
+
+    shared_hashes = (
+        set(
+            database_hash_buckets
+        )
+        & set(
+            disk_hash_buckets
+        )
+    )
+
+    for content_hash in sorted(
+        shared_hashes
+    ):
+
+        old_paths = (
+            database_hash_buckets[
+                content_hash
+            ]
+        )
+
+        new_paths = (
+            disk_hash_buckets[
+                content_hash
+            ]
+        )
+
+        if (
+            len(old_paths) != 1
+            or len(new_paths) != 1
+        ):
+
+            continue
+
+        moved_database_paths.add(
+            old_paths[0]
+        )
+
+        moved_disk_paths.add(
+            new_paths[0]
+        )
+
+    pending_moved = len(
+        moved_database_paths
+    )
+
+    # ========================================================
+    # 8. NEW / DELETED
+    #
+    # MOVED 两侧必须排除。
+    # ========================================================
+
+    pending_deleted = len(
+        unmatched_database_paths
+        - moved_database_paths
+    )
+
+    pending_new = len(
+        unmatched_disk_paths
+        - moved_disk_paths
+    )
+
+    # ========================================================
+    # 9. SQLite counts
     # ========================================================
 
     (
@@ -308,7 +482,7 @@ def get_knowledge_base_status(
     ) = _get_sqlite_counts()
 
     # ========================================================
-    # 6. Qdrant
+    # 10. Qdrant
     # ========================================================
 
     vector_count = (
@@ -316,7 +490,7 @@ def get_knowledge_base_status(
     )
 
     # ========================================================
-    # 7. 是否需要同步
+    # 11. Sync required
     # ========================================================
 
     sync_required = any(
@@ -324,6 +498,7 @@ def get_knowledge_base_status(
             pending_new,
             pending_modified,
             pending_deleted,
+            pending_moved,
             pending_hash_backfill,
             pages_without_chunks,
             (
@@ -334,8 +509,11 @@ def get_knowledge_base_status(
     )
 
     return KnowledgeBaseStatus(
+        # 物理 PDF 数，包括 exact duplicates。
         source_pdf_count=(
-            len(disk_documents)
+            len(
+                raw_disk_documents
+            )
         ),
 
         indexed_document_count=(
@@ -362,11 +540,17 @@ def get_knowledge_base_status(
             pending_deleted
         ),
 
+        pending_moved=(
+            pending_moved
+        ),
+
         pending_hash_backfill=(
             pending_hash_backfill
         ),
 
-        sync_required=sync_required,
+        sync_required=(
+            sync_required
+        ),
     )
 
 
@@ -459,6 +643,10 @@ def update_knowledge_base(
 
                 deleted_documents=(
                     sync_result.deleted
+                ),
+
+                moved_documents=(
+                    sync_result.moved
                 ),
 
                 unchanged_documents=(

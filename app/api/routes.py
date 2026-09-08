@@ -56,18 +56,20 @@ def resolve_document_pdf_path(
     document: dict,
 ) -> Path:
     """
-    将数据库中的 document
-    安全映射回 data/papers 中的 PDF。
+    根据数据库记录安全解析原始 PDF。
 
-    注意：
+    支持：
 
-    不直接相信 local_path。
+        PAPERS_FOLDER/
+            storage/
+                ABC123/
+                    paper.pdf
 
-    这是为了：
+    安全要求：
 
-    1. 不暴露宿主机绝对路径；
-    2. Docker 后仍然可移植；
-    3. 防止路径穿越。
+    - 必须位于配置的 PDF Library 内
+    - 必须是实际文件
+    - 必须是 PDF
     """
 
     papers_root = (
@@ -75,22 +77,23 @@ def resolve_document_pdf_path(
         .resolve()
     )
 
-    filename = (
+    local_path = (
         document.get(
-            "filename"
+            "local_path"
         )
     )
 
-    if not filename:
+    if not local_path:
 
         raise FileNotFoundError(
-            "论文文件名不存在。"
+            "论文 PDF 路径不存在。"
         )
 
     pdf_path = (
-        papers_root
-        / filename
-    ).resolve()
+        Path(local_path)
+        .expanduser()
+        .resolve()
+    )
 
     try:
 
@@ -101,7 +104,8 @@ def resolve_document_pdf_path(
     except ValueError as error:
 
         raise FileNotFoundError(
-            "论文路径不合法。"
+            "论文 PDF 不在允许的"
+            "文献目录中。"
         ) from error
 
     if (

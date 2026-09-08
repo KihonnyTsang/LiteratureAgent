@@ -64,6 +64,8 @@ class KnowledgeBaseStatusResponse(
 
     pending_deleted: int
 
+    pending_moved: int
+
     pending_hash_backfill: int
 
     sync_required: bool
@@ -81,6 +83,8 @@ class KnowledgeBaseSyncResponse(
     modified_documents: int
 
     deleted_documents: int
+
+    moved_documents: int
 
     unchanged_documents: int
 

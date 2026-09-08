@@ -663,6 +663,53 @@ def update_document_content_hash(
         connection.close()
 
 
+def update_document_local_path(
+    document_id: str,
+    local_path: str,
+) -> None:
+    """
+    更新文献当前实际 PDF 路径。
+
+    仅用于确认 content_hash 相同的
+    relocation / move。
+
+    不修改：
+    - document_id
+    - title
+    - filename
+    - pages
+    - chunks
+    - facts
+    """
+
+    connection = get_connection()
+
+    try:
+
+        connection.execute(
+            """
+            UPDATE documents
+            SET local_path = ?
+            WHERE id = ?
+            """,
+            (
+                local_path,
+                document_id,
+            ),
+        )
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+        raise
+
+    finally:
+
+        connection.close()
+
+
 def table_exists(
     connection: sqlite3.Connection,
     table_name: str,

@@ -59,6 +59,11 @@ def main() -> None:
     )
 
     print(
+        f"移动文献："
+        f"{result.moved_documents}"
+    )
+
+    print(
         f"未变化文献："
         f"{result.unchanged_documents}"
     )

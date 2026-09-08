@@ -11,6 +11,7 @@ from app.database.sqlite_db import (
     delete_document_data,
     get_documents_for_sync,
     update_document_content_hash,
+    update_document_local_path,
 )
 
 from app.ingestion.ingest import (
@@ -30,6 +31,7 @@ class SyncResult:
     new: int = 0
     modified: int = 0
     deleted: int = 0
+    moved: int = 0
     unchanged: int = 0
     hash_backfilled: int = 0
 
@@ -38,33 +40,55 @@ def scan_papers_folder(
     folder: Path,
 ) -> dict[str, dict]:
     """
-    扫描磁盘当前所有 PDF。
+    递归扫描 PDF 根目录中的所有 PDF。
 
     key:
         resolve 后的绝对 local_path
 
     value:
-        path / filename / content_hash
+        path
+        filename
+        content_hash
+
+    不会静默创建用户配置的目录。
+
+    如果目录不存在，直接报错，
+    避免因为路径拼写错误而把现有知识库
+    误判为全部 DELETED。
     """
 
     folder = folder.resolve()
 
-    folder.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    if not folder.exists():
+
+        raise FileNotFoundError(
+            "PDF 根目录不存在："
+            f"{folder}"
+        )
+
+    if not folder.is_dir():
+
+        raise NotADirectoryError(
+            "PDF 根路径不是目录："
+            f"{folder}"
+        )
 
     result = {}
 
     pdf_files = sorted(
-        path
-        for path
-        in folder.iterdir()
-        if (
-            path.is_file()
-            and path.suffix.lower()
-            == ".pdf"
-        )
+        (
+            path
+            for path
+            in folder.rglob("*")
+            if (
+                path.is_file()
+                and path.suffix.lower()
+                == ".pdf"
+            )
+        ),
+        key=lambda path: str(
+            path
+        ),
     )
 
     for pdf_path in pdf_files:
@@ -93,6 +117,134 @@ def scan_papers_folder(
         }
 
     return result
+
+def deduplicate_disk_documents(
+    disk_documents: dict[str, dict],
+) -> tuple[
+    dict[str, dict],
+    dict[str, list[str]],
+]:
+    """
+    按 content_hash 折叠字节级完全相同的 PDF。
+
+    返回：
+
+    unique_documents:
+        用于知识库 reconciliation 的逻辑文档。
+
+    duplicate_groups:
+        {
+            content_hash: [
+                path_1,
+                path_2,
+                ...
+            ]
+        }
+
+    canonical path 的选择规则：
+
+        对相同 content_hash 的所有绝对路径
+        做字符串排序，选择第一条。
+
+    这个规则：
+    - 确定性
+    - 与 Zotero 无关
+    - 与文件名无关
+    - 不使用业务 hardcoding
+    """
+
+    hash_buckets: dict[
+        str,
+        list[str],
+    ] = {}
+
+    documents_without_hash = []
+
+    for (
+        local_path,
+        document,
+    ) in disk_documents.items():
+
+        content_hash = (
+            document.get(
+                "content_hash"
+            )
+        )
+
+        if not content_hash:
+
+            documents_without_hash.append(
+                local_path
+            )
+
+            continue
+
+        hash_buckets.setdefault(
+            content_hash,
+            [],
+        ).append(
+            local_path
+        )
+
+    unique_documents: dict[
+        str,
+        dict,
+    ] = {}
+
+    duplicate_groups: dict[
+        str,
+        list[str],
+    ] = {}
+
+    for (
+        content_hash,
+        paths,
+    ) in hash_buckets.items():
+
+        sorted_paths = sorted(
+            paths
+        )
+
+        canonical_path = (
+            sorted_paths[0]
+        )
+
+        unique_documents[
+            canonical_path
+        ] = (
+            disk_documents[
+                canonical_path
+            ]
+        )
+
+        if len(sorted_paths) > 1:
+
+            duplicate_groups[
+                content_hash
+            ] = sorted_paths
+
+    # scan_papers_folder 正常情况下
+    # 每个 PDF 都一定有 hash。
+    #
+    # 这里仍然保留 defensive fallback，
+    # 避免未来 scanner contract 改变时
+    # 静默丢失文件。
+    for local_path in sorted(
+        documents_without_hash
+    ):
+
+        unique_documents[
+            local_path
+        ] = (
+            disk_documents[
+                local_path
+            ]
+        )
+
+    return (
+        unique_documents,
+        duplicate_groups,
+    )
 
 
 def delete_document_vectors(
@@ -137,6 +289,65 @@ def delete_document_vectors(
 
         client.close()
 
+def update_document_vector_local_path(
+    document_id: str,
+    local_path: str,
+) -> None:
+    """
+    更新 Qdrant 中某篇文献已有 Points 的
+    local_path payload。
+
+    只修改 metadata：
+
+        local_path
+
+    不修改：
+    - point id
+    - vector
+    - text
+    - title
+    - filename
+    - chunk metadata
+
+    用于 PDF relocation。
+    """
+
+    init_collection()
+
+    client = (
+        get_qdrant_client()
+    )
+
+    try:
+
+        client.set_payload(
+            collection_name=(
+                COLLECTION_NAME
+            ),
+
+            payload={
+                "local_path":
+                    local_path,
+            },
+
+            points=Filter(
+                must=[
+                    FieldCondition(
+                        key="document_id",
+
+                        match=MatchValue(
+                            value=document_id
+                        ),
+                    )
+                ]
+            ),
+
+            wait=True,
+        )
+
+    finally:
+
+        client.close()
 
 def remove_document(
     document: dict,
@@ -174,14 +385,29 @@ def sync_knowledge_base(
     papers_folder: Path,
 ) -> SyncResult:
     """
-    将 data/papers 视为知识库 source of truth。
+    将配置的 PDF Library
+    视为知识库 source of truth。
 
     自动识别：
 
     NEW
     MODIFIED
     DELETED
+    MOVED
     UNCHANGED
+
+    MOVED 定义：
+
+        local_path 不同
+        但 content_hash 完全相同
+
+    MOVED 不重新：
+    - parse PDF
+    - build chunks
+    - embedding
+    - extraction
+
+    只更新 documents.local_path。
     """
 
     result = SyncResult()
@@ -190,11 +416,57 @@ def sync_knowledge_base(
     # 1. 当前磁盘状态
     # ========================================================
 
-    disk_documents = (
+    raw_disk_documents = (
         scan_papers_folder(
             papers_folder
         )
     )
+
+    (
+        disk_documents,
+        duplicate_groups,
+    ) = deduplicate_disk_documents(
+        raw_disk_documents
+    )
+
+    if duplicate_groups:
+
+        skipped_duplicate_count = sum(
+            len(paths) - 1
+            for paths
+            in duplicate_groups.values()
+        )
+
+        print()
+
+        print(
+            "[DUPLICATE] "
+            f"检测到 "
+            f"{skipped_duplicate_count} "
+            "个完全重复 PDF，"
+            "不会重复入库。"
+        )
+
+        for paths in (
+                duplicate_groups.values()
+        ):
+
+            canonical_path = (
+                paths[0]
+            )
+
+            print(
+                "  保留："
+                f"{canonical_path}"
+            )
+
+            for duplicate_path in (
+                    paths[1:]
+            ):
+                print(
+                    "  跳过："
+                    f"{duplicate_path}"
+                )
 
     # ========================================================
     # 2. 当前 SQLite 状态
@@ -216,40 +488,7 @@ def sync_knowledge_base(
     )
 
     # ========================================================
-    # 3. Deleted
-    # ========================================================
-
-    deleted_paths = (
-        database_paths
-        - disk_paths
-    )
-
-    for local_path in sorted(
-        deleted_paths
-    ):
-
-        document = (
-            database_documents[
-                local_path
-            ]
-        )
-
-        print()
-        print(
-            "[DELETED] "
-            f"{document['filename']}"
-        )
-
-        remove_document(
-            document
-        )
-
-        result.deleted += 1
-
-    # ========================================================
-    # 4. Existing:
-    #
-    # UNCHANGED / MODIFIED / legacy hash backfill
+    # 3. 路径仍然相同的文档
     # ========================================================
 
     common_paths = (
@@ -288,13 +527,7 @@ def sync_knowledge_base(
         )
 
         # ----------------------------------------------------
-        # 旧数据库第一次升级：
-        #
-        # content_hash=NULL
-        #
-        # 当前无法知道 PDF 在历史上是否变过，
-        # 因此以当前磁盘文件为 baseline，
-        # 只补 hash，不做整库重建。
+        # Legacy database hash backfill
         # ----------------------------------------------------
 
         if not database_hash:
@@ -323,7 +556,7 @@ def sync_knowledge_base(
             continue
 
         # ----------------------------------------------------
-        # Unchanged
+        # UNCHANGED
         # ----------------------------------------------------
 
         if (
@@ -341,10 +574,11 @@ def sync_knowledge_base(
             continue
 
         # ----------------------------------------------------
-        # Modified
+        # MODIFIED
         # ----------------------------------------------------
 
         print()
+
         print(
             "[MODIFIED] "
             f"{database_document['filename']}"
@@ -361,12 +595,258 @@ def sync_knowledge_base(
         result.modified += 1
 
     # ========================================================
-    # 5. New
+    # 4. 路径消失 / 新出现
+    #
+    # 先不要直接认为是：
+    #
+    # DELETED / NEW
+    #
+    # 因为它可能只是被移动了。
+    # ========================================================
+
+    unmatched_database_paths = (
+        database_paths
+        - disk_paths
+    )
+
+    unmatched_disk_paths = (
+        disk_paths
+        - database_paths
+    )
+
+    # ========================================================
+    # 5. 为 unmatched 文档建立 hash buckets
+    # ========================================================
+
+    database_hash_buckets = {}
+
+    for local_path in (
+        unmatched_database_paths
+    ):
+
+        document = (
+            database_documents[
+                local_path
+            ]
+        )
+
+        content_hash = (
+            document.get(
+                "content_hash"
+            )
+        )
+
+        if not content_hash:
+
+            continue
+
+        database_hash_buckets.setdefault(
+            content_hash,
+            [],
+        ).append(
+            local_path
+        )
+
+    disk_hash_buckets = {}
+
+    for local_path in (
+        unmatched_disk_paths
+    ):
+
+        document = (
+            disk_documents[
+                local_path
+            ]
+        )
+
+        content_hash = (
+            document.get(
+                "content_hash"
+            )
+        )
+
+        if not content_hash:
+
+            continue
+
+        disk_hash_buckets.setdefault(
+            content_hash,
+            [],
+        ).append(
+            local_path
+        )
+
+    # ========================================================
+    # 6. MOVED detection
+    #
+    # 只有 hash 在 DB 与磁盘两侧都唯一时，
+    # 才自动认定为 MOVED。
+    #
+    # 如果存在重复 PDF：
+    #
+    # hash -> 多个路径
+    #
+    # 不进行猜测。
+    # ========================================================
+
+    moved_database_paths = set()
+    moved_disk_paths = set()
+
+    shared_hashes = (
+        set(
+            database_hash_buckets
+        )
+        & set(
+            disk_hash_buckets
+        )
+    )
+
+    for content_hash in sorted(
+        shared_hashes
+    ):
+
+        old_paths = (
+            database_hash_buckets[
+                content_hash
+            ]
+        )
+
+        new_paths = (
+            disk_hash_buckets[
+                content_hash
+            ]
+        )
+
+        if (
+            len(old_paths) != 1
+            or len(new_paths) != 1
+        ):
+
+            continue
+
+        old_path = old_paths[0]
+        new_path = new_paths[0]
+
+        database_document = (
+            database_documents[
+                old_path
+            ]
+        )
+
+        disk_document = (
+            disk_documents[
+                new_path
+            ]
+        )
+
+        document_id = (
+            database_document[
+                "id"
+            ]
+        )
+
+        # ----------------------------------------------------
+        # 先更新 Qdrant payload
+        #
+        # 顺序故意是：
+        #
+        # Qdrant -> SQLite
+        #
+        # 如果 Qdrant 成功但 SQLite 失败，
+        # 下次 sync 仍然会再次识别为 MOVED，
+        # 可以安全重试。
+        #
+        # 如果反过来先改 SQLite，
+        # Qdrant 更新失败后，下次就无法再通过
+        # old_path -> new_path 检测 MOVED。
+        # ----------------------------------------------------
+
+        update_document_vector_local_path(
+            document_id=(
+                document_id
+            ),
+
+            local_path=(
+                new_path
+            ),
+        )
+
+        update_document_local_path(
+            document_id=(
+                document_id
+            ),
+
+            local_path=(
+                new_path
+            ),
+        )
+
+        moved_database_paths.add(
+            old_path
+        )
+
+        moved_disk_paths.add(
+            new_path
+        )
+
+        result.moved += 1
+
+        print()
+
+        print(
+            "[MOVED] "
+            f"{database_document['filename']}"
+        )
+
+        print(
+            "        "
+            f"{old_path}"
+        )
+
+        print(
+            "     -> "
+            f"{new_path}"
+        )
+
+    # ========================================================
+    # 7. 真正 DELETED
+    # ========================================================
+
+    deleted_paths = (
+        unmatched_database_paths
+        - moved_database_paths
+    )
+
+    for local_path in sorted(
+        deleted_paths
+    ):
+
+        document = (
+            database_documents[
+                local_path
+            ]
+        )
+
+        print()
+
+        print(
+            "[DELETED] "
+            f"{document['filename']}"
+        )
+
+        remove_document(
+            document
+        )
+
+        result.deleted += 1
+
+    # ========================================================
+    # 8. 真正 NEW
     # ========================================================
 
     new_paths = (
-        disk_paths
-        - database_paths
+        unmatched_disk_paths
+        - moved_disk_paths
     )
 
     for local_path in sorted(
@@ -380,6 +860,7 @@ def sync_knowledge_base(
         )
 
         print()
+
         print(
             "[NEW] "
             f"{disk_document['filename']}"
@@ -387,7 +868,9 @@ def sync_knowledge_base(
 
         ingest_pdf(
             pdf_path=(
-                disk_document["path"]
+                disk_document[
+                    "path"
+                ]
             ),
 
             content_hash=(
@@ -400,7 +883,7 @@ def sync_knowledge_base(
         result.new += 1
 
     # ========================================================
-    # 6. Re-ingest modified
+    # 9. Re-ingest MODIFIED
     # ========================================================
 
     for local_path in (
@@ -415,7 +898,9 @@ def sync_knowledge_base(
 
         ingest_pdf(
             pdf_path=(
-                disk_document["path"]
+                disk_document[
+                    "path"
+                ]
             ),
 
             content_hash=(

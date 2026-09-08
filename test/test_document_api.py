@@ -16,19 +16,37 @@ def make_document(
     *,
     document_id: str = "doc-001",
     filename: str = "paper.pdf",
+    local_path: str | None = None,
 ) -> dict:
+    """
+    构造测试用 Document 记录。
 
-    return {
-        "id": document_id,
-        "title": (
-            "Example Scientific Paper"
-        ),
-        "filename": filename,
-        "local_path": (
+    保持原有 regression fixture 不变，
+    只允许测试按需覆盖 local_path。
+    """
+
+    if local_path is None:
+
+        local_path = (
             "/private/server/path/"
             f"{filename}"
-        ),
-        "page_count": 12,
+        )
+
+    return {
+        "id":
+            document_id,
+
+        "title":
+            "Example Scientific Paper",
+
+        "filename":
+            filename,
+
+        "local_path":
+            local_path,
+
+        "page_count":
+            12,
     }
 
 
@@ -129,7 +147,11 @@ def test_document_pdf_api(
             "get_document_by_id",
 
             return_value=(
-                make_document()
+                    make_document(
+                        local_path=str(
+                            pdf_path
+                        )
+                    )
             ),
         ),
     ):
@@ -202,7 +224,11 @@ def test_document_pdf_rejects_path_escape(
 
     malicious_document = (
         make_document(
-            filename="../secret.pdf"
+            filename="secret.pdf",
+
+            local_path=str(
+                secret_pdf
+            ),
         )
     )
 
