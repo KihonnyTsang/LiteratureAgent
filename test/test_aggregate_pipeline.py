@@ -1,75 +1,167 @@
-from app.agent.planner import (
-    create_plan,
+from app.tools.schemas import (
+    ColumnSpec,
+    ToolResult,
 )
 
-from app.agent.executor import (
-    execute_plan,
+from app.tools.table_tool import (
+    aggregate_table,
 )
 
 
-TEST_QUESTIONS = [
+def build_page_table() -> ToolResult:
+    """
+    构造完全确定性的论文页数测试表。
 
-    "所有论文平均多少页？",
+    不依赖：
 
-    "所有论文总共有多少页？",
-]
+    - LLM
+    - SQLite
+    - Qdrant
+    - Embedding
+    """
+
+    return ToolResult(
+        columns=[
+            "title",
+            "page_count",
+        ],
+
+        rows=[
+            {
+                "title": "Paper A",
+                "page_count": 10,
+            },
+            {
+                "title": "Paper B",
+                "page_count": 20,
+            },
+            {
+                "title": "Paper C",
+                "page_count": 30,
+            },
+        ],
+
+        column_specs=[
+            ColumnSpec(
+                field="title",
+                label="论文",
+                role="identifier",
+                visible=True,
+                format_hint="text",
+            ),
+            ColumnSpec(
+                field="page_count",
+                label="页数",
+                role="measure",
+                visible=True,
+                format_hint="number",
+            ),
+        ],
+
+        metadata={
+            "source": "synthetic_test",
+        },
+    )
 
 
-def test_aggregate_pipeline():
+def test_aggregate_pipeline() -> None:
+    """
+    验证确定性 aggregation。
 
-    for question in TEST_QUESTIONS:
+    mean:
+        (10 + 20 + 30) / 3 = 20
 
-        print()
-        print("=" * 80)
+    sum:
+        10 + 20 + 30 = 60
+    """
 
-        print(
-            "用户：",
-            question,
-        )
+    input_table = build_page_table()
 
-        # ====================================================
-        # Planner
-        # ====================================================
+    # ========================================================
+    # Mean
+    # ========================================================
 
-        plan = create_plan(
-            question
-        )
+    mean_result = aggregate_table(
+        input_table=input_table,
+        operation="mean",
+        field="page_count",
+    )
 
-        print()
-        print("Planner:")
-        print(
-            plan.model_dump_json(
-                indent=2
-            )
-        )
+    assert (
+        mean_result.columns
+        == ["value"]
+    )
 
-        # ====================================================
-        # Executor
-        # ====================================================
-
-        execution = execute_plan(
-            plan
-        )
-
-        last_step_id = (
-            plan.steps[-1].step_id
-        )
-
-        result = execution[
-            "step_results"
-        ][
-            last_step_id
+    assert (
+        mean_result.rows
+        == [
+            {
+                "value": 20,
+            }
         ]
+    )
 
-        print()
-        print("Result:")
+    assert (
+        mean_result.metadata[
+            "aggregation"
+        ]
+        == "mean"
+    )
 
-        for row in result.rows:
+    assert (
+        mean_result.metadata[
+            "aggregation_field"
+        ]
+        == "page_count"
+    )
 
-            print(
-                row
-            )
+    assert (
+        mean_result.metadata[
+            "source"
+        ]
+        == "synthetic_test"
+    )
 
+    mean_spec = (
+        mean_result.get_column_spec(
+            "value"
+        )
+    )
 
-if __name__ == "__main__":
-    test_aggregate_pipeline()
+    assert mean_spec is not None
+
+    assert (
+        mean_spec.label
+        == "页数"
+    )
+
+    assert (
+        mean_spec.role
+        == "measure"
+    )
+
+    # ========================================================
+    # Sum
+    # ========================================================
+
+    sum_result = aggregate_table(
+        input_table=input_table,
+        operation="sum",
+        field="page_count",
+    )
+
+    assert (
+        sum_result.rows
+        == [
+            {
+                "value": 60,
+            }
+        ]
+    )
+
+    assert (
+        sum_result.metadata[
+            "aggregation"
+        ]
+        == "sum"
+    )

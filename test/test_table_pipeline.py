@@ -1,63 +1,139 @@
-from app.agent.planner import (
-    create_plan,
+from app.tools.schemas import (
+    ColumnSpec,
+    ToolResult,
 )
 
-from app.agent.executor import (
-    execute_plan,
+from app.tools.table_tool import (
+    sort_table,
 )
 
 
-def test_table_pipeline():
+def test_table_pipeline() -> None:
+    """
+    验证通用 sort_table：
 
-    question = (
-        "按页数从多到少排列所有论文"
+    - descending 排序
+    - None 始终放在最后
+    - rows 不丢失
+    - ColumnSpec 保持
+    - metadata 正确记录排序语义
+    """
+
+    input_table = ToolResult(
+        columns=[
+            "title",
+            "page_count",
+        ],
+
+        rows=[
+            {
+                "title": "Paper A",
+                "page_count": 10,
+            },
+            {
+                "title": "Paper B",
+                "page_count": None,
+            },
+            {
+                "title": "Paper C",
+                "page_count": 30,
+            },
+            {
+                "title": "Paper D",
+                "page_count": 20,
+            },
+        ],
+
+        column_specs=[
+            ColumnSpec(
+                field="title",
+                label="论文",
+                role="identifier",
+                visible=True,
+                format_hint="text",
+            ),
+            ColumnSpec(
+                field="page_count",
+                label="页数",
+                role="measure",
+                visible=True,
+                format_hint="integer",
+            ),
+        ],
+
+        metadata={
+            "source": "synthetic_test",
+        },
     )
 
-    print(
-        "用户：",
-        question,
+    result = sort_table(
+        input_table=input_table,
+        field="page_count",
+        order="descending",
     )
 
-    plan = create_plan(
-        question
-    )
-
-    print()
-    print("=" * 80)
-    print("Planner")
-    print("=" * 80)
-
-    print(
-        plan.model_dump_json(
-            indent=2
-        )
-    )
-
-    execution = execute_plan(
-        plan
-    )
-
-    print()
-    print("=" * 80)
-    print("Final Table")
-    print("=" * 80)
-
-    last_step_id = (
-        plan.steps[-1].step_id
-    )
-
-    result = execution[
-        "step_results"
-    ][
-        last_step_id
+    assert [
+        row["title"]
+        for row
+        in result.rows
+    ] == [
+        "Paper C",
+        "Paper D",
+        "Paper A",
+        "Paper B",
     ]
 
-    for row in result.rows:
+    assert [
+        row["page_count"]
+        for row
+        in result.rows
+    ] == [
+        30,
+        20,
+        10,
+        None,
+    ]
 
-        print(
-            row
+    assert (
+        len(result.rows)
+        == len(input_table.rows)
+    )
+
+    assert (
+        result.metadata[
+            "sorted_by"
+        ]
+        == "page_count"
+    )
+
+    assert (
+        result.metadata[
+            "sort_order"
+        ]
+        == "descending"
+    )
+
+    assert (
+        result.metadata[
+            "source"
+        ]
+        == "synthetic_test"
+    )
+
+    page_spec = (
+        result.get_column_spec(
+            "page_count"
         )
+    )
 
+    assert page_spec is not None
 
-if __name__ == "__main__":
-    test_table_pipeline()
+    assert (
+        page_spec.label
+        == "页数"
+    )
+
+    assert (
+        page_spec.role
+        == "measure"
+    )
