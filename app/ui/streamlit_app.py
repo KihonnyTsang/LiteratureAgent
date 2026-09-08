@@ -23,6 +23,14 @@ AGENT_RUN_URL = (
     f"{API_BASE_URL}/api/v1/agent/run"
 )
 
+KB_STATUS_URL = (
+    f"{API_BASE_URL}/api/v1/kb/status"
+)
+
+KB_SYNC_URL = (
+    f"{API_BASE_URL}/api/v1/kb/sync"
+)
+
 
 # ============================================================
 # Page
@@ -88,6 +96,55 @@ def ask_agent(
 
         return response.json()
 
+def get_kb_status(
+) -> dict[str, Any] | None:
+    """
+    读取知识库状态。
+
+    只调用 FastAPI，
+    Streamlit 不直接访问 SQLite / Qdrant。
+    """
+
+    try:
+
+        response = httpx.get(
+            KB_STATUS_URL,
+            timeout=10.0,
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
+    except httpx.HTTPError:
+
+        return None
+
+
+def request_kb_sync(
+) -> dict[str, Any]:
+    """
+    请求 FastAPI 执行完整知识库同步。
+
+    新增 PDF 时可能需要计算 Embedding，
+    因此这里允许较长的读取超时。
+    """
+
+    with httpx.Client(
+        timeout=httpx.Timeout(
+            600.0,
+            connect=5.0,
+        )
+    ) as client:
+
+        response = client.post(
+            KB_SYNC_URL
+        )
+
+        response.raise_for_status()
+
+        return response.json()
+
 
 # ============================================================
 # Sidebar
@@ -95,11 +152,16 @@ def ask_agent(
 
 def render_sidebar(
     health: dict[str, Any] | None,
+    kb_status: dict[str, Any] | None,
 ) -> None:
     """
-    Sidebar 放系统状态和示例问题。
+    Sidebar：
 
-    不占用主要科研结果区域。
+    - Backend 状态
+    - Knowledge Base 状态
+    - Knowledge Base 同步入口
+    - 最近一次同步结果
+    - 示例问题
     """
 
     with st.sidebar:
@@ -112,6 +174,10 @@ def render_sidebar(
             "Scientific Literature "
             "Intelligence"
         )
+
+        # ====================================================
+        # Backend
+        # ====================================================
 
         st.divider()
 
@@ -141,6 +207,252 @@ def render_sidebar(
                 "app.api.server:app "
                 "--reload"
             )
+
+        # ====================================================
+        # Knowledge Base
+        # ====================================================
+
+        st.divider()
+
+        st.subheader(
+            "知识库"
+        )
+
+        if kb_status is None:
+
+            if health:
+
+                st.warning(
+                    "暂时无法读取知识库状态。"
+                )
+
+            else:
+
+                st.caption(
+                    "Backend 启动后可读取"
+                    "知识库状态。"
+                )
+
+        else:
+
+            # ------------------------------------------------
+            # Core counts
+            # ------------------------------------------------
+
+            column_1, column_2 = (
+                st.columns(2)
+            )
+
+            with column_1:
+
+                st.metric(
+                    "PDF",
+                    kb_status.get(
+                        "source_pdf_count",
+                        0,
+                    ),
+                )
+
+            with column_2:
+
+                st.metric(
+                    "Documents",
+                    kb_status.get(
+                        "indexed_document_count",
+                        0,
+                    ),
+                )
+
+            column_3, column_4 = (
+                st.columns(2)
+            )
+
+            with column_3:
+
+                st.metric(
+                    "Pages",
+                    kb_status.get(
+                        "page_count",
+                        0,
+                    ),
+                )
+
+            with column_4:
+
+                st.metric(
+                    "Chunks",
+                    kb_status.get(
+                        "chunk_count",
+                        0,
+                    ),
+                )
+
+            st.metric(
+                "Vectors",
+                kb_status.get(
+                    "vector_count",
+                    0,
+                ),
+            )
+
+            # ------------------------------------------------
+            # Sync state
+            # ------------------------------------------------
+
+            sync_required = bool(
+                kb_status.get(
+                    "sync_required",
+                    False,
+                )
+            )
+
+            if sync_required:
+
+                st.warning(
+                    "检测到未同步的知识库变化"
+                )
+
+                st.caption(
+                    "待新增 "
+                    f"{kb_status.get('pending_new', 0)}"
+                    " · 待修改 "
+                    f"{kb_status.get('pending_modified', 0)}"
+                    " · 待删除 "
+                    f"{kb_status.get('pending_deleted', 0)}"
+                )
+
+                pages_without_chunks = (
+                    kb_status.get(
+                        "pages_without_chunks",
+                        0,
+                    )
+                )
+
+                if pages_without_chunks:
+
+                    st.caption(
+                        "待生成 Chunk 的页面："
+                        f"{pages_without_chunks}"
+                    )
+
+            else:
+
+                st.success(
+                    "知识库已同步"
+                )
+
+        # ====================================================
+        # Sync button
+        # ====================================================
+
+        sync_clicked = st.button(
+            "同步知识库",
+            type="secondary",
+            use_container_width=True,
+            disabled=(
+                health is None
+            ),
+        )
+
+        if sync_clicked:
+
+            try:
+
+                with st.spinner(
+                    "正在同步 PDF、"
+                    "Chunks 与向量索引..."
+                ):
+
+                    sync_result = (
+                        request_kb_sync()
+                    )
+
+                st.session_state[
+                    "last_kb_sync_result"
+                ] = sync_result
+
+                # 重新运行页面，
+                # 从 /kb/status 获取同步后的真实状态。
+                st.rerun()
+
+            except httpx.TimeoutException:
+
+                st.error(
+                    "知识库同步请求超时。"
+                )
+
+            except (
+                httpx.HTTPStatusError
+            ) as error:
+
+                response = (
+                    error.response
+                )
+
+                try:
+
+                    detail = (
+                        response
+                        .json()
+                        .get(
+                            "detail",
+                            str(error),
+                        )
+                    )
+
+                except ValueError:
+
+                    detail = str(
+                        error
+                    )
+
+                st.error(
+                    "知识库同步失败："
+                    f"{detail}"
+                )
+
+            except httpx.HTTPError as error:
+
+                st.error(
+                    "无法连接知识库 API："
+                    f"{error}"
+                )
+
+        # ====================================================
+        # Last sync
+        # ====================================================
+
+        last_sync = (
+            st.session_state.get(
+                "last_kb_sync_result"
+            )
+        )
+
+        if last_sync:
+
+            st.caption(
+                "最近一次同步"
+            )
+
+            st.markdown(
+                "新增 "
+                f"**{last_sync.get('new_documents', 0)}**"
+                " · 修改 "
+                f"**{last_sync.get('modified_documents', 0)}**"
+                " · 删除 "
+                f"**{last_sync.get('deleted_documents', 0)}**"
+            )
+
+            st.caption(
+                "新增 Chunks "
+                f"{last_sync.get('new_chunks', 0)}"
+                " · 新增 Vectors "
+                f"{last_sync.get('vectors_added', 0)}"
+            )
+
+        # ====================================================
+        # Examples
+        # ====================================================
 
         st.divider()
 
@@ -711,14 +1023,37 @@ st.markdown(
 
 health = check_backend()
 
+kb_status = (
+    get_kb_status()
+    if health
+    else None
+)
+
 render_sidebar(
-    health
+    health=health,
+    kb_status=kb_status,
 )
 
 
 # ============================================================
 # Question
 # ============================================================
+
+knowledge_base_outdated = bool(
+    kb_status
+    and kb_status.get(
+        "sync_required",
+        False,
+    )
+)
+
+if knowledge_base_outdated:
+
+    st.warning(
+        "检测到 data/papers 与当前知识库不同步。"
+        "请先在左侧点击「同步知识库」，"
+        "再进行文献分析。"
+    )
 
 with st.container(
     border=True
@@ -742,6 +1077,10 @@ with st.container(
                 "开始分析",
                 type="primary",
                 use_container_width=True,
+                disabled=(
+                        health is None
+                        or knowledge_base_outdated
+                ),
             )
         )
 
@@ -762,11 +1101,26 @@ if submitted:
             "请输入科研问题。"
         )
 
+
     elif health is None:
 
         st.error(
+
             "FastAPI 后端当前不可用。"
+
         )
+
+
+    elif knowledge_base_outdated:
+
+        st.warning(
+
+            "知识库存在未同步变化，"
+
+            "请先执行知识库同步。"
+
+        )
+
 
     else:
 

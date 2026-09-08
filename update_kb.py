@@ -1,43 +1,23 @@
-from pathlib import Path
-
-from app.database.sqlite_db import (
-    init_db,
-)
-
-from app.ingestion.kb_sync import (
-    sync_knowledge_base,
-)
-
-from app.ingestion.chunker import (
-    build_chunks_for_all_pages,
-)
-
-from app.embedding.indexer import (
-    build_vector_index,
+from app.ingestion.kb_manager import (
+    update_knowledge_base,
 )
 
 
-PROJECT_ROOT = (
-    Path(__file__)
-    .resolve()
-    .parent
-)
+def main() -> None:
+    """
+    CLI 入口。
 
-PAPERS_FOLDER = (
-    PROJECT_ROOT
-    / "data"
-    / "papers"
-)
-
-
-def main():
+    实际同步逻辑统一由
+    app.ingestion.kb_manager
+    提供。
+    """
 
     print(
         "=" * 70
     )
 
     print(
-        "Literature Agent - "
+        "LiteratureAgent - "
         "Knowledge Base Sync"
     )
 
@@ -45,59 +25,12 @@ def main():
         "=" * 70
     )
 
-    # ========================================================
-    # 1. DB schema
-    # ========================================================
-
-    print()
-    print(
-        "[1/4] 初始化数据库..."
+    result = (
+        update_knowledge_base()
     )
 
-    init_db()
-
-    # ========================================================
-    # 2. Reconciliation
-    # ========================================================
-
     print()
-    print(
-        "[2/4] 同步 PDF 与知识库..."
-    )
 
-    sync_result = (
-        sync_knowledge_base(
-            PAPERS_FOLDER
-        )
-    )
-
-    # ========================================================
-    # 3. Chunks
-    # ========================================================
-
-    print()
-    print(
-        "[3/4] 构建文本 Chunk..."
-    )
-
-    build_chunks_for_all_pages()
-
-    # ========================================================
-    # 4. Vector DB
-    # ========================================================
-
-    print()
-    print(
-        "[4/4] 更新向量知识库..."
-    )
-
-    build_vector_index()
-
-    # ========================================================
-    # Summary
-    # ========================================================
-
-    print()
     print(
         "=" * 70
     )
@@ -111,34 +44,83 @@ def main():
     )
 
     print(
-        f"新增："
-        f"{sync_result.new}"
+        f"新增文献："
+        f"{result.new_documents}"
     )
 
     print(
-        f"修改："
-        f"{sync_result.modified}"
+        f"修改文献："
+        f"{result.modified_documents}"
     )
 
     print(
-        f"删除："
-        f"{sync_result.deleted}"
+        f"删除文献："
+        f"{result.deleted_documents}"
     )
 
     print(
-        f"未变化："
-        f"{sync_result.unchanged}"
+        f"未变化文献："
+        f"{result.unchanged_documents}"
     )
 
     if (
-        sync_result.hash_backfilled
+        result.hash_backfilled
         > 0
     ):
 
         print(
             f"首次补写 Hash："
-            f"{sync_result.hash_backfilled}"
+            f"{result.hash_backfilled}"
         )
+
+    print(
+        f"本次新增 Chunks："
+        f"{result.new_chunks}"
+    )
+
+    print(
+        f"本次新增向量："
+        f"{result.vectors_added}"
+    )
+
+    print(
+        f"额外清理失效向量："
+        f"{result.stale_vectors_deleted}"
+    )
+
+    print(
+        "-" * 70
+    )
+
+    print(
+        f"当前 PDF："
+        f"{result.status.source_pdf_count}"
+    )
+
+    print(
+        f"当前 Documents："
+        f"{result.status.indexed_document_count}"
+    )
+
+    print(
+        f"当前 Pages："
+        f"{result.status.page_count}"
+    )
+
+    print(
+        f"当前 Chunks："
+        f"{result.status.chunk_count}"
+    )
+
+    print(
+        f"当前 Vectors："
+        f"{result.status.vector_count}"
+    )
+
+    print(
+        f"仍需同步："
+        f"{result.status.sync_required}"
+    )
 
     print(
         "=" * 70

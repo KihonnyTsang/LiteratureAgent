@@ -61,21 +61,33 @@ def split_text_into_chunks(
 
     return chunks
 
-def build_chunks_for_all_pages():
+def build_chunks_for_all_pages() -> int:
     """
     为数据库中的所有页面建立 Chunk。
+
+    返回本次实际新增的 Chunk 数量。
     """
 
     pages = get_all_pages()
 
-    print(f"准备处理 {len(pages)} 个页面")
+    print(
+        f"准备处理 "
+        f"{len(pages)} "
+        "个页面"
+    )
 
     total_chunks = 0
 
     for page in pages:
 
-        document_id = page["document_id"]
-        page_number = page["page_number"]
+        document_id = (
+            page["document_id"]
+        )
+
+        page_number = (
+            page["page_number"]
+        )
+
         text = page["text"]
 
         # 已经处理过的页面直接跳过
@@ -83,9 +95,14 @@ def build_chunks_for_all_pages():
             document_id=document_id,
             page_number=page_number,
         ):
+
             continue
 
-        chunks = split_text_into_chunks(text)
+        chunks = (
+            split_text_into_chunks(
+                text
+            )
+        )
 
         insert_chunks(
             document_id=document_id,
@@ -93,6 +110,14 @@ def build_chunks_for_all_pages():
             chunks=chunks,
         )
 
-        total_chunks += len(chunks)
+        total_chunks += len(
+            chunks
+        )
 
-    print(f"本次新生成 {total_chunks} 个 Chunks")
+    print(
+        f"本次新生成 "
+        f"{total_chunks} "
+        "个 Chunks"
+    )
+
+    return total_chunks
