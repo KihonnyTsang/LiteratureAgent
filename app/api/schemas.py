@@ -22,6 +22,22 @@ class HealthResponse(BaseModel):
 
     version: str
 
+class DocumentReferenceResponse(
+    BaseModel
+):
+    """
+    浏览器可见的论文资源元数据。
+
+    故意不暴露 local_path。
+    """
+
+    document_id: str
+
+    title: str
+
+    filename: str
+
+    page_count: int | None = None
 
 class KnowledgeBaseStatusResponse(
     BaseModel

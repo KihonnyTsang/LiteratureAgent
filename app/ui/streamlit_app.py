@@ -1,6 +1,7 @@
 import os
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 import streamlit as st
@@ -13,6 +14,11 @@ import streamlit as st
 API_BASE_URL = os.getenv(
     "LITERATURE_AGENT_API_URL",
     "http://127.0.0.1:8000",
+).rstrip("/")
+
+PUBLIC_API_BASE_URL = os.getenv(
+    "LITERATURE_AGENT_PUBLIC_API_URL",
+    API_BASE_URL,
 ).rstrip("/")
 
 HEALTH_URL = (
@@ -29,6 +35,10 @@ KB_STATUS_URL = (
 
 KB_SYNC_URL = (
     f"{API_BASE_URL}/api/v1/kb/sync"
+)
+
+DOCUMENTS_URL = (
+    f"{API_BASE_URL}/api/v1/documents"
 )
 
 
@@ -144,6 +154,351 @@ def request_kb_sync(
         response.raise_for_status()
 
         return response.json()
+
+
+def get_document_catalog(
+) -> list[dict[str, Any]]:
+    """
+    从 FastAPI 获取当前已经索引的论文目录。
+
+    Streamlit 不直接读取 SQLite。
+    """
+
+    try:
+
+        response = httpx.get(
+            DOCUMENTS_URL,
+            timeout=10.0,
+        )
+
+        response.raise_for_status()
+
+        payload = response.json()
+
+        if not isinstance(
+            payload,
+            list,
+        ):
+
+            return []
+
+        return payload
+
+    except httpx.HTTPError:
+
+        return []
+
+
+def build_document_lookup(
+    documents: list[
+        dict[str, Any]
+    ],
+) -> dict[str, dict]:
+    """
+    构建 UI 用论文查找表。
+
+    同时支持：
+
+    title
+    filename
+
+    如果 title / filename 出现重复，
+    不建立该 key 的映射，
+    防止打开错误论文。
+    """
+
+    title_buckets = {}
+    filename_buckets = {}
+
+    for document in documents:
+
+        title = document.get(
+            "title"
+        )
+
+        filename = document.get(
+            "filename"
+        )
+
+        if title:
+
+            title_buckets.setdefault(
+                title,
+                [],
+            ).append(
+                document
+            )
+
+        if filename:
+
+            filename_buckets.setdefault(
+                filename,
+                [],
+            ).append(
+                document
+            )
+
+    by_title = {
+        key: values[0]
+        for key, values
+        in title_buckets.items()
+        if len(values) == 1
+    }
+
+    by_filename = {
+        key: values[0]
+        for key, values
+        in filename_buckets.items()
+        if len(values) == 1
+    }
+
+    return {
+        "by_title":
+            by_title,
+
+        "by_filename":
+            by_filename,
+    }
+
+
+def find_document_reference(
+    document_lookup: dict[
+        str,
+        dict
+    ],
+
+    *,
+    title: str | None = None,
+    filename: str | None = None,
+) -> dict | None:
+    """
+    根据 filename / title
+    找到对应 document reference。
+
+    filename 优先。
+    """
+
+    by_filename = (
+        document_lookup.get(
+            "by_filename",
+            {},
+        )
+    )
+
+    if (
+        filename
+        and filename in by_filename
+    ):
+
+        return (
+            by_filename[
+                filename
+            ]
+        )
+
+    by_title = (
+        document_lookup.get(
+            "by_title",
+            {},
+        )
+    )
+
+    if (
+        title
+        and title in by_title
+    ):
+
+        return (
+            by_title[
+                title
+            ]
+        )
+
+    return None
+
+
+def normalize_page_number(
+    value: Any,
+) -> int | None:
+    """
+    将 Renderer / RAG 返回的页码
+    安全转换成 PDF page fragment。
+    """
+
+    if value is None:
+
+        return None
+
+    try:
+
+        page_number = int(
+            float(
+                str(value).strip()
+            )
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+
+        return None
+
+    if page_number <= 0:
+
+        return None
+
+    return page_number
+
+
+def build_pdf_url(
+    document_id: str,
+    page_number: int | None = None,
+) -> str:
+    """
+    构建浏览器可访问 PDF URL。
+
+    注意这里使用 PUBLIC_API_BASE_URL，
+    而不是 Streamlit Container 内部 API URL。
+    """
+
+    encoded_document_id = quote(
+        str(document_id),
+        safe="",
+    )
+
+    url = (
+        f"{PUBLIC_API_BASE_URL}"
+        f"/api/v1/documents/"
+        f"{encoded_document_id}"
+        f"/pdf"
+    )
+
+    if page_number:
+
+        url += (
+            f"#page="
+            f"{page_number}"
+        )
+
+    return url
+
+
+def get_reference_pdf_url(
+    document_lookup: dict[
+        str,
+        dict
+    ],
+
+    *,
+    title: str | None = None,
+    filename: str | None = None,
+    page_number: Any = None,
+) -> str | None:
+    """
+    从 UI reference 信息生成 PDF URL。
+    """
+
+    document = (
+        find_document_reference(
+            document_lookup,
+            title=title,
+            filename=filename,
+        )
+    )
+
+    if document is None:
+
+        return None
+
+    document_id = document.get(
+        "document_id"
+    )
+
+    if not document_id:
+
+        return None
+
+    resolved_page = (
+        normalize_page_number(
+            page_number
+        )
+    )
+
+    return build_pdf_url(
+        document_id=document_id,
+        page_number=resolved_page,
+    )
+
+def add_pdf_links_to_table_rows(
+    table_rows: list[
+        dict[str, Any]
+    ],
+
+    document_lookup: dict[
+        str,
+        dict
+    ],
+) -> list[dict[str, Any]]:
+    """
+    给结构化结果增加：
+
+        原文
+
+    链接列。
+
+    原始 table_rows 不修改。
+    """
+
+    result = []
+
+    for row in table_rows:
+
+        title = row.get(
+            "论文"
+        )
+
+        page_number = row.get(
+            "页码"
+        )
+
+        pdf_url = (
+            get_reference_pdf_url(
+                document_lookup,
+                title=title,
+                page_number=(
+                    page_number
+                ),
+            )
+        )
+
+        display_row = {}
+
+        for field, value in (
+            row.items()
+        ):
+
+            display_row[
+                field
+            ] = value
+
+            # 原文列尽量紧跟论文列
+            if (
+                field == "论文"
+                and pdf_url
+            ):
+
+                display_row[
+                    "原文"
+                ] = pdf_url
+
+        # 某些表可能没有“论文”列，
+        # 不强行增加链接。
+        result.append(
+            display_row
+        )
+
+    return result
 
 
 # ============================================================
@@ -510,10 +865,17 @@ def render_evidence_rows(
     evidence_rows: list[
         dict[str, Any]
     ],
+
+    document_lookup: dict[
+        str,
+        dict
+    ],
 ) -> None:
     """
-    Evidence 使用折叠卡片，
-    避免主页面过长。
+    Evidence 使用折叠卡片。
+
+    如果能够解析对应论文，
+    提供直接打开 PDF / 指定页面的入口。
     """
 
     if not evidence_rows:
@@ -540,6 +902,22 @@ def render_evidence_rows(
             "页码"
         )
 
+        page_number = (
+            normalize_page_number(
+                page
+            )
+        )
+
+        pdf_url = (
+            get_reference_pdf_url(
+                document_lookup,
+                title=title,
+                page_number=(
+                    page_number
+                ),
+            )
+        )
+
         label = (
             f"Evidence {index}"
             f" · {title}"
@@ -556,6 +934,43 @@ def render_evidence_rows(
             expanded=False,
         ):
 
+            # ================================================
+            # Original PDF
+            # ================================================
+
+            if pdf_url:
+
+                st.link_button(
+                    label=title,
+
+                    url=pdf_url,
+
+                    help=(
+                        "打开对应论文原文"
+                    ),
+                )
+
+                if page_number:
+
+                    st.caption(
+                        "点击上方论文标题，"
+                        f"直接打开原文 Page "
+                        f"{page_number}。"
+                    )
+
+                else:
+
+                    st.caption(
+                        "点击上方论文标题"
+                        "打开原文 PDF。"
+                    )
+
+                st.divider()
+
+            # ================================================
+            # Evidence fields
+            # ================================================
+
             for (
                 field,
                 value,
@@ -565,6 +980,15 @@ def render_evidence_rows(
                     None,
                     "",
                 }:
+
+                    continue
+
+                # 标题已经作为 PDF link
+                # 单独展示，不再重复一次。
+                if (
+                    field == "论文"
+                    and pdf_url
+                ):
 
                     continue
 
@@ -583,6 +1007,11 @@ def render_evidence_rows(
 
 def render_structured_result(
     result: dict[str, Any],
+
+    document_lookup: dict[
+        str,
+        dict
+    ],
 ) -> None:
     """
     Structured Result：
@@ -656,14 +1085,58 @@ def render_structured_result(
 
         if table_rows:
 
+            display_rows = (
+                add_pdf_links_to_table_rows(
+                    table_rows=table_rows,
+                    document_lookup=(
+                        document_lookup
+                    ),
+                )
+            )
+
+            has_pdf_links = any(
+                row.get(
+                    "原文"
+                )
+                for row
+                in display_rows
+            )
+
+            column_config = {}
+
+            if has_pdf_links:
+                column_config[
+                    "原文"
+                ] = (
+                    st.column_config
+                    .LinkColumn(
+                        "原文",
+
+                        help=(
+                            "打开对应论文 PDF。"
+                            "如果结果包含页码，"
+                            "会尽量直接跳到该页。"
+                        ),
+
+                        display_text=(
+                            "打开 PDF ↗"
+                        ),
+                    )
+                )
+
             st.dataframe(
-                table_rows,
+                display_rows,
                 use_container_width=True,
                 hide_index=True,
+
+                column_config=(
+                    column_config
+                ),
+
                 height=min(
                     520,
                     70
-                    + len(table_rows)
+                    + len(display_rows)
                     * 36,
                 ),
             )
@@ -740,7 +1213,13 @@ def render_structured_result(
         )
 
         render_evidence_rows(
-            evidence_rows
+            evidence_rows=(
+                evidence_rows
+            ),
+
+            document_lookup=(
+                document_lookup
+            ),
         )
 
     # ========================================================
@@ -804,6 +1283,11 @@ def render_structured_result(
 
 def render_grounded_result(
     result: dict[str, Any],
+
+    document_lookup: dict[
+        str,
+        dict
+    ],
 ) -> None:
     """
     Grounded RAG Result。
@@ -884,6 +1368,24 @@ def render_grounded_result(
                         4,
                     )
 
+                pdf_url = (
+                    get_reference_pdf_url(
+                        document_lookup,
+
+                        title=source.get(
+                            "title"
+                        ),
+
+                        filename=source.get(
+                            "filename"
+                        ),
+
+                        page_number=source.get(
+                            "page_number"
+                        ),
+                    )
+                )
+
                 source_rows.append(
                     {
                         "来源 ID":
@@ -908,13 +1410,34 @@ def render_grounded_result(
 
                         "检索得分":
                             score,
+
+                        "原文":
+                            pdf_url,
                     }
                 )
 
             st.dataframe(
                 source_rows,
+
                 use_container_width=True,
+
                 hide_index=True,
+
+                column_config={
+                    "原文":
+                        st.column_config
+                        .LinkColumn(
+                            "原文",
+
+                            help=(
+                                "打开对应原文页。"
+                            ),
+
+                            display_text=(
+                                "打开原文 ↗"
+                            ),
+                        ),
+                },
             )
 
             st.caption(
@@ -969,6 +1492,11 @@ def render_grounded_result(
 
 def render_agent_result(
     result: dict[str, Any],
+
+    document_lookup: dict[
+        str,
+        dict
+    ],
 ) -> None:
     """
     只根据 Result Protocol 分流。
@@ -981,13 +1509,24 @@ def render_agent_result(
     if result_type == "structured":
 
         render_structured_result(
-            result
+            result=result,
+
+            document_lookup=(
+                document_lookup
+            ),
         )
 
-    elif result_type == "grounded_text":
+    elif (
+        result_type
+        == "grounded_text"
+    ):
 
         render_grounded_result(
-            result
+            result=result,
+
+            document_lookup=(
+                document_lookup
+            ),
         )
 
     else:
@@ -1032,6 +1571,18 @@ kb_status = (
 render_sidebar(
     health=health,
     kb_status=kb_status,
+)
+
+document_catalog = (
+    get_document_catalog()
+    if health
+    else []
+)
+
+document_lookup = (
+    build_document_lookup(
+        document_catalog
+    )
 )
 
 
@@ -1216,5 +1767,9 @@ if last_result:
         )
 
     render_agent_result(
-        last_result
+        result=last_result,
+
+        document_lookup=(
+            document_lookup
+        ),
     )

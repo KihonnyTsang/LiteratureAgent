@@ -489,6 +489,60 @@ def get_all_documents() -> list[dict]:
 
         connection.close()
 
+def get_document_by_id(
+    document_id: str,
+) -> dict | None:
+    """
+    根据 document_id 获取单篇论文元数据。
+
+    供 Document API 使用。
+
+    不读取 PDF 内容，
+    不访问 Qdrant，
+    不调用 Embedding / LLM。
+    """
+
+    connection = get_connection()
+
+    connection.row_factory = (
+        sqlite3.Row
+    )
+
+    try:
+
+        cursor = (
+            connection.execute(
+                """
+                SELECT
+                    id,
+                    title,
+                    filename,
+                    local_path,
+                    page_count
+                FROM documents
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (
+                    document_id,
+                ),
+            )
+        )
+
+        row = cursor.fetchone()
+
+        if row is None:
+
+            return None
+
+        return dict(
+            row
+        )
+
+    finally:
+
+        connection.close()
+
 def insert_fact(
     document_id: str,
     metric_name: str,

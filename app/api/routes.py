@@ -13,6 +13,14 @@ from fastapi import (
     Request,
 )
 
+from fastapi.responses import (
+    FileResponse,
+)
+
+from app.database.sqlite_db import (
+    get_all_documents,
+    get_document_by_id,
+)
 from app.agent.plan_validator import (
     PlanValidationError,
 )
@@ -28,11 +36,13 @@ from app.api.schemas import (
     HealthResponse,
     KnowledgeBaseStatusResponse,
     KnowledgeBaseSyncResponse,
+    DocumentReferenceResponse,
 )
 from app.ingestion.kb_manager import (
     KnowledgeBaseSyncInProgressError,
     get_knowledge_base_status,
     update_knowledge_base,
+    PAPERS_FOLDER,
 )
 
 
@@ -42,6 +52,69 @@ logger = logging.getLogger(
 
 router = APIRouter()
 
+def resolve_document_pdf_path(
+    document: dict,
+) -> Path:
+    """
+    将数据库中的 document
+    安全映射回 data/papers 中的 PDF。
+
+    注意：
+
+    不直接相信 local_path。
+
+    这是为了：
+
+    1. 不暴露宿主机绝对路径；
+    2. Docker 后仍然可移植；
+    3. 防止路径穿越。
+    """
+
+    papers_root = (
+        PAPERS_FOLDER
+        .resolve()
+    )
+
+    filename = (
+        document.get(
+            "filename"
+        )
+    )
+
+    if not filename:
+
+        raise FileNotFoundError(
+            "论文文件名不存在。"
+        )
+
+    pdf_path = (
+        papers_root
+        / filename
+    ).resolve()
+
+    try:
+
+        pdf_path.relative_to(
+            papers_root
+        )
+
+    except ValueError as error:
+
+        raise FileNotFoundError(
+            "论文路径不合法。"
+        ) from error
+
+    if (
+        not pdf_path.is_file()
+        or pdf_path.suffix.lower()
+        != ".pdf"
+    ):
+
+        raise FileNotFoundError(
+            "论文 PDF 文件不存在。"
+        )
+
+    return pdf_path
 
 def build_plot_url(
     result: AgentRunResult,
@@ -106,6 +179,134 @@ def health_check() -> HealthResponse:
         status="ok",
         service="LiteratureAgent",
         version="0.1.0",
+    )
+
+
+@router.get(
+    "/api/v1/documents",
+
+    response_model=list[
+        DocumentReferenceResponse
+    ],
+
+    tags=[
+        "Documents",
+    ],
+)
+def list_documents_api(
+) -> list[
+    DocumentReferenceResponse
+]:
+    """
+    返回当前已经索引的论文目录。
+
+    不暴露服务器 local_path。
+    """
+
+    try:
+
+        documents = (
+            get_all_documents()
+        )
+
+        return [
+            DocumentReferenceResponse(
+                document_id=(
+                    document["id"]
+                ),
+
+                title=(
+                    document["title"]
+                ),
+
+                filename=(
+                    document["filename"]
+                ),
+
+                page_count=(
+                    document.get(
+                        "page_count"
+                    )
+                ),
+            )
+
+            for document
+            in documents
+        ]
+
+    except Exception as error:
+
+        logger.exception(
+            "读取论文目录失败。"
+        )
+
+        raise HTTPException(
+            status_code=500,
+
+            detail=(
+                "LiteratureAgent "
+                "论文目录读取失败。"
+            ),
+        ) from error
+
+
+@router.get(
+    "/api/v1/documents/"
+    "{document_id}/pdf",
+
+    tags=[
+        "Documents",
+    ],
+)
+def document_pdf_api(
+    document_id: str,
+) -> FileResponse:
+    """
+    通过 document_id 返回原始 PDF。
+
+    PDF 只允许来自：
+
+        data/papers/
+
+    不允许客户端提交任意文件路径。
+    """
+
+    document = (
+        get_document_by_id(
+            document_id
+        )
+    )
+
+    if document is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail="论文不存在。",
+        )
+
+    try:
+
+        pdf_path = (
+            resolve_document_pdf_path(
+                document
+            )
+        )
+
+    except FileNotFoundError as error:
+
+        raise HTTPException(
+            status_code=404,
+            detail=str(error),
+        ) from error
+
+    return FileResponse(
+        path=str(
+            pdf_path
+        ),
+
+        media_type=(
+            "application/pdf"
+        ),
     )
 
 
