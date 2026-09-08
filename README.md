@@ -15,6 +15,13 @@
   <img src="https://img.shields.io/badge/Qdrant-Vector%20Store-DC244C" alt="Qdrant">
   <img src="https://img.shields.io/badge/BGE--M3-Embedding-orange" alt="BGE-M3">
   <img src="https://img.shields.io/badge/pytest-31%20tests-0A9EDC" alt="31 pytest tests">
+
+  <a href="https://github.com/KihonnyTsang/LiteratureAgent/actions/workflows/tests.yml">
+    <img
+      src="https://github.com/KihonnyTsang/LiteratureAgent/actions/workflows/tests.yml/badge.svg"
+      alt="Tests"
+    >
+  </a>
 </p>
 
 <p align="center">
