@@ -1,24 +1,131 @@
 # LiteratureAgent
 
-> A scientific literature agent for grounded retrieval, structured fact extraction, cross-paper quantitative analysis, and evidence-traceable scientific answering.
+<p align="center">
+  <strong>Scientific Literature Intelligence Agent</strong>
+</p>
 
-LiteratureAgent 是一个面向科研论文的智能文献分析 Agent。
+<p align="center">
+  Grounded RAG · Structured Fact Extraction · Cross-Paper Quantitative Analysis · Scientific Data Validation
+</p>
 
-它不仅支持传统的语义检索与文献问答，还能够从多篇论文中抽取结构化科学事实、统一物理单位、执行跨论文定量比较、生成可视化结果，并保留论文页码、原始证据和数据来源。
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python 3.11">
+  <img src="https://img.shields.io/badge/FastAPI-Agent%20API-009688" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Streamlit-Web%20UI-FF4B4B" alt="Streamlit">
+  <img src="https://img.shields.io/badge/Qdrant-Vector%20Store-DC244C" alt="Qdrant">
+  <img src="https://img.shields.io/badge/BGE--M3-Embedding-orange" alt="BGE-M3">
+  <img src="https://img.shields.io/badge/pytest-31%20tests-0A9EDC" alt="31 pytest tests">
+</p>
 
-项目重点不是构建一个普通的 RAG Demo，而是探索如何将：
+<p align="center">
+  <img
+    src="docs/images/streamlit-dashboard.png"
+    alt="LiteratureAgent Streamlit scientific analysis interface"
+    width="100%"
+  >
+</p>
 
-- LLM semantic reasoning
-- Retrieval-Augmented Generation
-- structured scientific extraction
-- deterministic numerical computation
-- agent planning
-- tool execution
-- scientific data validation
+LiteratureAgent 是一个面向科研论文的智能文献分析 Agent，针对传统 RAG 难以可靠完成的 **跨论文定量分析、科学事实抽取、单位统一和证据追踪** 进行了专门设计。
 
-组合成一个可验证、可扩展的科研 Agent 系统。
+它不仅可以回答：
+
+> 为什么加入 BaTiO3 后压电输出会增强？
+
+还可以处理：
+
+> 比较所有论文作者自己报告的功率密度，统一单位后按从高到低排序，并生成图表。
+
+系统会根据任务类型，在语义检索与结构化科学分析之间选择不同执行路径，并通过受约束的 Agent Plan 调用 RAG、Fact、Metadata、Table 和 Plot Tools。
 
 ---
+
+## Why this is more than a basic RAG demo
+
+传统 RAG 通常执行：
+
+```text
+Question
+→ Global Top-K Retrieval
+→ LLM
+→ Answer
+```
+
+这适合文献问答，但不适合回答：
+
+```text
+“比较所有论文中的某个科学指标”
+```
+
+因为 Global Top-K 无法保证覆盖所有文档，也不能可靠完成物理单位转换、数值排序和来源区分。
+
+LiteratureAgent 对定量任务采用另一条路径：
+
+```text
+User Question
+    ↓
+Structured Agent Plan
+    ↓
+Per-document Scientific Retrieval
+    ↓
+LLM Fact Extraction
+    ↓
+Provenance Classification
+    ↓
+Physical Unit Normalization
+    ↓
+SQLite Fact Store
+    ↓
+Deterministic Python Analysis
+    ↓
+Table / Plot / Evidence
+```
+
+核心原则是：
+
+> **LLM handles semantics; deterministic tools handle numbers.**
+
+LLM 负责：
+
+```text
+intent understanding
+planning
+semantic extraction
+scientific language generation
+```
+
+Python / structured tools 负责：
+
+```text
+unit conversion
+filtering
+aggregation
+sorting
+plotting
+numeric validation
+```
+
+因此 LLM 不直接负责跨论文数值计算。
+
+---
+
+## Key Engineering Highlights
+
+- **Grounded literature QA** with source-level citation tracking
+- **Per-document structured scientific fact extraction**
+- **Dynamic scientific metric resolution**
+- **Author result vs cited literature provenance separation**
+- **Pint-based dimensionality validation**
+- **Raw scientific value preservation**
+- **Deterministic aggregation, sorting and visualization**
+- **Validated structured Agent Plans**
+- **Typed `TextResult` / `ToolResult` protocols**
+- **Incremental SQLite ↔ Qdrant vector synchronization**
+- **FastAPI application layer**
+- **Streamlit scientific analysis workspace**
+- **31-test pytest regression suite**
+
+---
+
 
 ## Features
 
