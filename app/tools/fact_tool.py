@@ -555,16 +555,25 @@ def query_facts(
     document_names: list[str] | None = None,
 ) -> ToolResult:
     """
-    查询跨论文科研结构化事实。
+    查询已经持久化的跨论文结构化事实。
+
+    重要：
+
+    query_facts 是在线查询工具，
+    不负责执行新的 LLM Fact Extraction。
 
     工作流程：
 
     1. 解析 Metric
     2. 确定论文范围
-    3. 优先读取 Facts Cache
-    4. Cache Miss 时执行 Fact Extraction
-    5. 单位归一化
-    6. 返回统一 ToolResult
+    3. 检查 Facts Cache
+    4. 只读取已经完成的 extraction cache
+    5. Cache Miss 只记录 coverage gap
+    6. 单位归一化
+    7. 返回 ToolResult + coverage metadata
+
+    新的 Fact Extraction 必须由离线
+    fact lifecycle 显式执行。
     """
 
     metric_spec = resolve_tool_metric(
@@ -581,10 +590,10 @@ def query_facts(
     rows = []
 
     cache_hit_count = 0
-    extraction_count = 0
+    missing_document_count = 0
 
     # ========================================================
-    # 遍历每篇论文
+    # 遍历目标论文
     # ========================================================
 
     for document in documents:
@@ -592,10 +601,6 @@ def query_facts(
         document_id = (
             document["id"]
         )
-
-        # ----------------------------------------------------
-        # Cache？
-        # ----------------------------------------------------
 
         cache_exists = (
             has_cached_extraction(
@@ -616,65 +621,40 @@ def query_facts(
         )
 
         # ----------------------------------------------------
+        # Cache Miss
+        #
+        # 在线 query 绝不执行新的 extraction。
+        # ----------------------------------------------------
+
+        if not cache_exists:
+
+            print(
+                f"Fact Missing："
+                f"{document['title']}"
+            )
+
+            missing_document_count += 1
+
+            continue
+
+        # ----------------------------------------------------
         # Cache Hit
         # ----------------------------------------------------
 
-        if cache_exists:
+        print(
+            f"Fact Cache："
+            f"{document['title']}"
+        )
 
-            print(
-                f"Fact Cache："
-                f"{document['title']}"
-            )
-
-            facts = (
-                load_cached_facts(
-                    document_id=document_id,
-
-                    metric_name=(
-                        metric_spec.key
-                    ),
-
-                    extraction_scope=(
-                        provenance_scope
-                    ),
-
-                    extraction_version=(
-                        EXTRACTION_VERSION
-                    ),
-                )
-            )
-
-            cache_hit_count += 1
-
-        # ----------------------------------------------------
-        # Cache Miss
-        # ----------------------------------------------------
-
-        else:
-
-            print(
-                f"Fact Extraction："
-                f"{document['title']}"
-            )
-
-            facts = extract_facts(
+        facts = (
+            load_cached_facts(
                 document_id=document_id,
 
-                metric=metric_spec,
-
-                provenance_scope=(
-                    provenance_scope
+                metric_name=(
+                    metric_spec.key
                 ),
-            )
 
-            replace_facts_for_document_metric(
-                document_id=document_id,
-
-                metric_spec=metric_spec,
-
-                facts=facts,
-
-                provenance_scope=(
+                extraction_scope=(
                     provenance_scope
                 ),
 
@@ -682,8 +662,9 @@ def query_facts(
                     EXTRACTION_VERSION
                 ),
             )
+        )
 
-            extraction_count += 1
+        cache_hit_count += 1
 
         # ----------------------------------------------------
         # ExtractedFact -> ToolResult rows
@@ -698,6 +679,34 @@ def query_facts(
                     metric_spec=metric_spec,
                 )
             )
+
+    # ========================================================
+    # Coverage
+    # ========================================================
+
+    document_count = len(
+        documents
+    )
+
+    coverage_complete = (
+        missing_document_count
+        == 0
+    )
+
+    if document_count:
+
+        coverage_ratio = (
+            cache_hit_count
+            / document_count
+        )
+
+    else:
+
+        coverage_ratio = 1.0
+
+    # ========================================================
+    # Result
+    # ========================================================
 
     return ToolResult(
         columns=FACT_COLUMNS,
@@ -726,23 +735,43 @@ def query_facts(
             "provenance_scope":
                 provenance_scope,
 
+            # --------------------------------------------
+            # Backward-compatible fields
+            # --------------------------------------------
+
             "cache_hit_count":
                 cache_hit_count,
 
+            # query_facts 永远不再做 extraction。
             "extraction_count":
-                extraction_count,
+                0,
 
             "document_count":
-                len(documents),
+                document_count,
 
             "fact_count":
                 len(rows),
 
-            # 非常重要：
-            #
-            # 后面的 sort / aggregate / plot
-            # 应优先使用 value，
-            # 而不是 raw_value。
+            # --------------------------------------------
+            # Coverage contract
+            # --------------------------------------------
+
+            "cached_document_count":
+                cache_hit_count,
+
+            "missing_document_count":
+                missing_document_count,
+
+            "coverage_complete":
+                coverage_complete,
+
+            "coverage_ratio":
+                coverage_ratio,
+
+            # --------------------------------------------
+            # 数学字段 contract
+            # --------------------------------------------
+
             "numeric_field":
                 "value",
 
@@ -750,3 +779,238 @@ def query_facts(
                 "unit",
         },
     )
+
+def update_fact_cache(
+    metric: str,
+    scope: str = "all_documents",
+    provenance_scope: str = "author_results",
+    document_names: list[str] | None = None,
+    limit: int | None = None,
+) -> dict:
+    """
+    离线、增量更新 Structured Fact Cache。
+
+    与 query_facts 不同：
+
+    这个函数允许执行真正的 LLM Fact Extraction。
+
+    已经存在成功 extraction cache 的文档会跳过。
+
+    limit:
+        最多抽取多少篇当前 cache miss 的文档。
+
+        用于：
+        - 小批量运行
+        - 控制 LLM 成本
+        - 中断后增量恢复
+
+    已经成功写入的 extraction 会保留；
+    后续重新运行时会自动跳过。
+    """
+
+    if (
+        limit is not None
+        and limit <= 0
+    ):
+
+        raise ValueError(
+            "limit 必须大于 0。"
+        )
+
+    metric_spec = resolve_tool_metric(
+        metric
+    )
+
+    documents = select_documents(
+        scope=scope,
+        document_names=document_names,
+    )
+
+    ensure_facts_schema()
+
+    cached_document_count = 0
+    extracted_document_count = 0
+    deferred_document_count = 0
+    fact_count = 0
+
+    document_count = len(
+        documents
+    )
+
+    for index, document in enumerate(
+        documents,
+        start=1,
+    ):
+
+        document_id = (
+            document["id"]
+        )
+
+        cache_exists = (
+            has_cached_extraction(
+                document_id=document_id,
+
+                metric_name=(
+                    metric_spec.key
+                ),
+
+                extraction_scope=(
+                    provenance_scope
+                ),
+
+                extraction_version=(
+                    EXTRACTION_VERSION
+                ),
+            )
+        )
+
+        # ----------------------------------------------------
+        # Existing Cache
+        # ----------------------------------------------------
+
+        if cache_exists:
+
+            print(
+                f"[{index}/{document_count}] "
+                "Fact Cache："
+                f"{document['title']}"
+            )
+
+            facts = (
+                load_cached_facts(
+                    document_id=document_id,
+
+                    metric_name=(
+                        metric_spec.key
+                    ),
+
+                    extraction_scope=(
+                        provenance_scope
+                    ),
+
+                    extraction_version=(
+                        EXTRACTION_VERSION
+                    ),
+                )
+            )
+
+            cached_document_count += 1
+            fact_count += len(
+                facts
+            )
+
+            continue
+
+        # ----------------------------------------------------
+        # Batch limit
+        # ----------------------------------------------------
+
+        if (
+            limit is not None
+            and extracted_document_count
+            >= limit
+        ):
+
+            deferred_document_count += 1
+
+            continue
+
+        # ----------------------------------------------------
+        # New Extraction
+        # ----------------------------------------------------
+
+        print(
+            f"[{index}/{document_count}] "
+            "Fact Extraction："
+            f"{document['title']}"
+        )
+
+        facts = extract_facts(
+            document_id=document_id,
+
+            metric=metric_spec,
+
+            provenance_scope=(
+                provenance_scope
+            ),
+        )
+
+        replace_facts_for_document_metric(
+            document_id=document_id,
+
+            metric_spec=metric_spec,
+
+            facts=facts,
+
+            provenance_scope=(
+                provenance_scope
+            ),
+
+            extraction_version=(
+                EXTRACTION_VERSION
+            ),
+        )
+
+        extracted_document_count += 1
+        fact_count += len(
+            facts
+        )
+
+    completed_document_count = (
+        cached_document_count
+        + extracted_document_count
+    )
+
+    coverage_complete = (
+        completed_document_count
+        == document_count
+    )
+
+    if document_count:
+
+        coverage_ratio = (
+            completed_document_count
+            / document_count
+        )
+
+    else:
+
+        coverage_ratio = 1.0
+
+    return {
+        "metric_key":
+            metric_spec.key,
+
+        "metric_display_name":
+            metric_spec.display_name,
+
+        "provenance_scope":
+            provenance_scope,
+
+        "extraction_version":
+            EXTRACTION_VERSION,
+
+        "document_count":
+            document_count,
+
+        "cached_document_count":
+            cached_document_count,
+
+        "extracted_document_count":
+            extracted_document_count,
+
+        "deferred_document_count":
+            deferred_document_count,
+
+        "completed_document_count":
+            completed_document_count,
+
+        "fact_count":
+            fact_count,
+
+        "coverage_complete":
+            coverage_complete,
+
+        "coverage_ratio":
+            coverage_ratio,
+    }

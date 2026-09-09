@@ -165,6 +165,259 @@ def init_db():
         )
         """
     )
+    # ========================================================
+    # Document Bibliography
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS document_bibliography (
+            document_id TEXT PRIMARY KEY,
+
+            doi TEXT,
+
+            title TEXT,
+
+            authors_json TEXT NOT NULL
+                DEFAULT '[]',
+
+            publication_year INTEGER,
+
+            journal_name TEXT,
+
+            issn TEXT,
+
+            eissn TEXT,
+
+            volume TEXT,
+
+            issue TEXT,
+
+            article_pages TEXT,
+
+            publisher TEXT,
+
+            source TEXT,
+
+            metadata_version TEXT,
+
+            retrieved_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (document_id)
+                REFERENCES documents(id)
+                ON DELETE CASCADE
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_document_bibliography_doi
+        ON document_bibliography(
+            doi
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_document_bibliography_journal
+        ON document_bibliography(
+            journal_name
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_document_bibliography_issn
+        ON document_bibliography(
+            issn
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_document_bibliography_eissn
+        ON document_bibliography(
+            eissn
+        )
+        """
+    )
+
+    # ========================================================
+    # Journal Metrics
+    #
+    # 一个 journal 可以有多个 metric：
+    #
+    # sciif
+    # sci
+    # ssci
+    # ajg
+    # utd24
+    # pku
+    # ...
+    #
+    # 不把 easyScholar 的字段硬编码成数据库列，
+    # 避免以后新增数据源或指标时修改 schema。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS journal_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            journal_key TEXT NOT NULL,
+
+            journal_name TEXT,
+
+            issn TEXT,
+
+            eissn TEXT,
+
+            metric_key TEXT NOT NULL,
+
+            metric_value_text TEXT,
+
+            metric_value_number REAL,
+
+            metric_year INTEGER NOT NULL
+                DEFAULT 0,
+
+            source TEXT NOT NULL,
+
+            raw_payload_json TEXT,
+
+            retrieved_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            UNIQUE(
+                journal_key,
+                metric_key,
+                metric_year,
+                source
+            )
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_journal_metrics_lookup
+        ON journal_metrics(
+            journal_key,
+            metric_key,
+            metric_year
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_journal_metrics_numeric
+        ON journal_metrics(
+            metric_key,
+            metric_value_number
+        )
+        """
+    )
+
+    # ========================================================
+    # Numeric Mentions
+    #
+    # 这里只保存：
+    #
+    # 原文中“出现了什么数字”
+    #
+    # 不在这里判断它是不是：
+    # power density / electric field / d33 ...
+    #
+    # Metric Classification 后再进入 facts。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS numeric_mentions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            document_id TEXT NOT NULL,
+
+            page_number INTEGER NOT NULL,
+
+            source_chunk_id INTEGER,
+
+            mention_key TEXT NOT NULL,
+
+            raw_text TEXT NOT NULL,
+
+            value_type TEXT NOT NULL
+                DEFAULT 'scalar',
+
+            raw_value REAL,
+
+            raw_value_min REAL,
+
+            raw_value_max REAL,
+
+            raw_unit TEXT,
+
+            sentence_text TEXT,
+
+            context_text TEXT,
+
+            detector_version TEXT NOT NULL,
+
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (document_id)
+                REFERENCES documents(id)
+                ON DELETE CASCADE,
+
+            FOREIGN KEY (source_chunk_id)
+                REFERENCES chunks(id)
+                ON DELETE SET NULL,
+
+            UNIQUE(
+                document_id,
+                detector_version,
+                mention_key
+            )
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_numeric_mentions_document
+        ON numeric_mentions(
+            document_id,
+            detector_version
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_numeric_mentions_unit
+        ON numeric_mentions(
+            raw_unit
+        )
+        """
+    )
     connection.commit()
     connection.close()
 
