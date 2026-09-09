@@ -1707,6 +1707,9 @@ def get_pending_provenance_input_rows(
                 nm.page_number
                     AS page_number,
 
+                nm.mention_key
+                    AS mention_key,
+
                 nm.raw_text
                     AS raw_text,
 
@@ -1808,6 +1811,9 @@ def get_pending_semantic_provenance_input_rows(
 
                 nm.page_number
                     AS page_number,
+
+                nm.mention_key
+                    AS mention_key,
 
                 nm.raw_text
                     AS raw_text,

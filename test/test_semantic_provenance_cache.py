@@ -373,6 +373,11 @@ def test_only_deterministic_unresolved_is_pending(
         == metric_classification_id
     )
 
+    assert (
+        rows[0]["mention_key"]
+        == "p1:0:4"
+    )
+
 
 def test_deterministic_classified_is_not_pending(
     tmp_path,
