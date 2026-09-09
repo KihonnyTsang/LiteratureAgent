@@ -543,6 +543,137 @@ def init_db():
         )
         """
     )
+    # ========================================================
+    # Numeric Metric Classifications
+    #
+    # Numeric Mention 是 immutable scientific evidence。
+    #
+    # Metric classification 作为派生 cache 独立保存，
+    # 不把 metric_key 直接写回 numeric_mentions。
+    #
+    # version provenance:
+    #
+    # detector_version
+    #     -> 由 numeric_mentions 自身保存
+    #
+    # normalizer_version
+    # ontology_version
+    # classifier_version
+    #     -> 由本表保存
+    #
+    # mention 被重新扫描删除时，
+    # classification 自动 ON DELETE CASCADE。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS
+            numeric_metric_classifications (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            mention_id INTEGER NOT NULL,
+
+            classifier_version TEXT NOT NULL,
+
+            ontology_version TEXT NOT NULL,
+
+            normalizer_version TEXT NOT NULL,
+
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'classified',
+                        'unresolved',
+                        'rejected'
+                    )
+                ),
+
+            metric_key TEXT,
+
+            method TEXT NOT NULL
+                DEFAULT 'deterministic'
+                CHECK (
+                    method IN (
+                        'deterministic',
+                        'llm'
+                    )
+                ),
+
+            score INTEGER,
+
+            candidates_json TEXT NOT NULL
+                DEFAULT '[]',
+
+            reason TEXT,
+
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (mention_id)
+                REFERENCES numeric_mentions(id)
+                ON DELETE CASCADE,
+
+            CHECK (
+                (
+                    status = 'classified'
+                    AND metric_key IS NOT NULL
+                )
+                OR
+                (
+                    status != 'classified'
+                    AND metric_key IS NULL
+                )
+            ),
+
+            UNIQUE(
+                mention_id,
+                classifier_version,
+                ontology_version,
+                normalizer_version
+            )
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_metric_classifications_lookup
+        ON numeric_metric_classifications(
+            classifier_version,
+            ontology_version,
+            normalizer_version,
+            status
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_metric_classifications_metric
+        ON numeric_metric_classifications(
+            classifier_version,
+            ontology_version,
+            normalizer_version,
+            metric_key
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_metric_classifications_mention
+        ON numeric_metric_classifications(
+            mention_id
+        )
+        """
+    )
     connection.commit()
     connection.close()
 

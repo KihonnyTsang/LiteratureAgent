@@ -1021,3 +1021,292 @@ def get_unit_signature_rows(
     finally:
 
         connection.close()
+
+def get_current_metric_classification_mention_ids(
+    *,
+    detector_version: str,
+    classifier_version: str,
+    ontology_version: str,
+    normalizer_version: str,
+) -> set[int]:
+    """
+    获取当前 Numeric Mention vocabulary 中，
+    已完成指定 classification version 的 mention ids。
+    """
+
+    connection = get_connection()
+
+    try:
+
+        rows = connection.execute(
+            """
+            SELECT
+                nmc.mention_id
+
+            FROM numeric_metric_classifications
+                AS nmc
+
+            JOIN numeric_mentions AS nm
+              ON nm.id = nmc.mention_id
+
+            WHERE nm.detector_version = ?
+              AND nmc.classifier_version = ?
+              AND nmc.ontology_version = ?
+              AND nmc.normalizer_version = ?
+            """,
+            (
+                detector_version,
+                classifier_version,
+                ontology_version,
+                normalizer_version,
+            ),
+        ).fetchall()
+
+        return {
+            int(row[0])
+            for row in rows
+        }
+
+    finally:
+
+        connection.close()
+
+
+def upsert_metric_classifications(
+    classifications: list[dict],
+) -> None:
+    """
+    批量保存 Metric Classification cache。
+    """
+
+    if not classifications:
+
+        return
+
+    connection = get_connection()
+
+    try:
+
+        records = [
+            (
+                item["mention_id"],
+                item["classifier_version"],
+                item["ontology_version"],
+                item["normalizer_version"],
+                item["status"],
+                item.get("metric_key"),
+                item.get(
+                    "method",
+                    "deterministic",
+                ),
+                item.get("score"),
+                item.get(
+                    "candidates_json",
+                    "[]",
+                ),
+                item.get("reason"),
+            )
+            for item
+            in classifications
+        ]
+
+        connection.executemany(
+            """
+            INSERT INTO
+                numeric_metric_classifications (
+                    mention_id,
+                    classifier_version,
+                    ontology_version,
+                    normalizer_version,
+                    status,
+                    metric_key,
+                    method,
+                    score,
+                    candidates_json,
+                    reason
+                )
+
+            VALUES (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?
+            )
+
+            ON CONFLICT(
+                mention_id,
+                classifier_version,
+                ontology_version,
+                normalizer_version
+            )
+
+            DO UPDATE SET
+
+                status =
+                    excluded.status,
+
+                metric_key =
+                    excluded.metric_key,
+
+                method =
+                    excluded.method,
+
+                score =
+                    excluded.score,
+
+                candidates_json =
+                    excluded.candidates_json,
+
+                reason =
+                    excluded.reason,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+            """,
+            records,
+        )
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+        raise
+
+    finally:
+
+        connection.close()
+
+
+def get_metric_classification_rows(
+    *,
+    detector_version: str | None = None,
+    classifier_version: str | None = None,
+    ontology_version: str | None = None,
+    normalizer_version: str | None = None,
+    status: str | None = None,
+    metric_key: str | None = None,
+) -> list[dict]:
+    """
+    查询 Metric Classification cache。
+
+    返回 classification，同时附带对应
+    Numeric Mention 的基本 provenance。
+    """
+
+    connection = get_connection()
+
+    connection.row_factory = (
+        sqlite3.Row
+    )
+
+    try:
+
+        sql = """
+        SELECT
+            nmc.*,
+
+            nm.document_id
+                AS document_id,
+
+            nm.detector_version
+                AS detector_version,
+
+            nm.page_number
+                AS page_number,
+
+            nm.raw_value
+                AS raw_value,
+
+            nm.raw_unit
+                AS raw_unit
+
+        FROM numeric_metric_classifications
+            AS nmc
+
+        JOIN numeric_mentions AS nm
+          ON nm.id = nmc.mention_id
+
+        WHERE 1 = 1
+        """
+
+        parameters = []
+
+        if detector_version is not None:
+
+            sql += """
+            AND nm.detector_version = ?
+            """
+
+            parameters.append(
+                detector_version
+            )
+
+        if classifier_version is not None:
+
+            sql += """
+            AND nmc.classifier_version = ?
+            """
+
+            parameters.append(
+                classifier_version
+            )
+
+        if ontology_version is not None:
+
+            sql += """
+            AND nmc.ontology_version = ?
+            """
+
+            parameters.append(
+                ontology_version
+            )
+
+        if normalizer_version is not None:
+
+            sql += """
+            AND nmc.normalizer_version = ?
+            """
+
+            parameters.append(
+                normalizer_version
+            )
+
+        if status is not None:
+
+            sql += """
+            AND nmc.status = ?
+            """
+
+            parameters.append(
+                status
+            )
+
+        if metric_key is not None:
+
+            sql += """
+            AND nmc.metric_key = ?
+            """
+
+            parameters.append(
+                metric_key
+            )
+
+        sql += """
+        ORDER BY
+            nm.document_id,
+            nm.page_number,
+            nmc.mention_id
+        """
+
+        rows = connection.execute(
+            sql,
+            parameters,
+        ).fetchall()
+
+        return [
+            dict(row)
+            for row in rows
+        ]
+
+    finally:
+
+        connection.close()
