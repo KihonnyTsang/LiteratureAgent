@@ -674,6 +674,126 @@ def init_db():
         )
         """
     )
+    # ========================================================
+    # Numeric Provenance Classifications
+    #
+    # 只对已经完成 Metric Classification 的结果
+    # 建立来源语义 cache。
+    #
+    # metric classification 被删除时，
+    # provenance classification 自动级联删除。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS
+            numeric_provenance_classifications (
+
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            metric_classification_id
+                INTEGER NOT NULL,
+
+            provenance_classifier_version
+                TEXT NOT NULL,
+
+            provenance_ontology_version
+                TEXT NOT NULL,
+
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'classified',
+                        'unresolved'
+                    )
+                ),
+
+            provenance TEXT NOT NULL
+                CHECK (
+                    provenance IN (
+                        'author_result',
+                        'cited_literature',
+                        'uncertain'
+                    )
+                ),
+
+            method TEXT NOT NULL
+                DEFAULT 'deterministic'
+                CHECK (
+                    method IN (
+                        'deterministic',
+                        'llm'
+                    )
+                ),
+
+            score INTEGER,
+
+            candidates_json TEXT NOT NULL
+                DEFAULT '[]',
+
+            reason TEXT,
+
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (
+                metric_classification_id
+            )
+                REFERENCES
+                    numeric_metric_classifications(id)
+                ON DELETE CASCADE,
+
+            CHECK (
+                (
+                    status = 'classified'
+                    AND provenance IN (
+                        'author_result',
+                        'cited_literature'
+                    )
+                )
+                OR
+                (
+                    status = 'unresolved'
+                    AND provenance = 'uncertain'
+                )
+            ),
+
+            UNIQUE(
+                metric_classification_id,
+                provenance_classifier_version,
+                provenance_ontology_version
+            )
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_provenance_classifications_lookup
+
+        ON numeric_provenance_classifications(
+            provenance_classifier_version,
+            provenance_ontology_version,
+            status,
+            provenance
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_provenance_classifications_metric
+
+        ON numeric_provenance_classifications(
+            metric_classification_id
+        )
+        """
+    )
     connection.commit()
     connection.close()
 
