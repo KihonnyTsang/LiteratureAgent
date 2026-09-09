@@ -6,7 +6,9 @@ from app.database.enrichment_repository import (
     get_document_bibliography,
     get_journal_metrics,
     get_numeric_mentions,
+    has_current_numeric_scan,
     replace_numeric_mentions_for_document,
+    replace_numeric_scan_result,
     upsert_document_bibliography,
     upsert_journal_metric,
 )
@@ -392,4 +394,90 @@ def test_enrichment_cascades_with_document_delete(
             document_id="doc_test",
         )
         == []
+    )
+
+def test_numeric_scan_run_tracks_content_hash(
+    tmp_path,
+    monkeypatch,
+):
+
+    prepare_database(
+        tmp_path,
+        monkeypatch,
+    )
+
+    # --------------------------------------------------------
+    # 第一次完整扫描，即使没有数字也要记录成功。
+    # --------------------------------------------------------
+
+    replace_numeric_scan_result(
+        document_id="doc_test",
+        content_hash="hash_test",
+        detector_version="v1",
+        mentions=[],
+    )
+
+    assert (
+        has_current_numeric_scan(
+            document_id="doc_test",
+            content_hash="hash_test",
+            detector_version="v1",
+        )
+        is True
+    )
+
+    # --------------------------------------------------------
+    # MOVED：
+    #
+    # path 可以改变，但 content_hash 不变。
+    # 不需要重新扫描。
+    # --------------------------------------------------------
+
+    connection = (
+        sqlite_db.get_connection()
+    )
+
+    try:
+
+        connection.execute(
+            """
+            UPDATE documents
+            SET local_path = ?
+            WHERE id = ?
+            """,
+            (
+                "/new/location/paper.pdf",
+                "doc_test",
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+
+        connection.close()
+
+    assert (
+        has_current_numeric_scan(
+            document_id="doc_test",
+            content_hash="hash_test",
+            detector_version="v1",
+        )
+        is True
+    )
+
+    # --------------------------------------------------------
+    # MODIFIED：
+    #
+    # PDF content hash changed。
+    # 必须重新扫描。
+    # --------------------------------------------------------
+
+    assert (
+        has_current_numeric_scan(
+            document_id="doc_test",
+            content_hash="new_hash",
+            detector_version="v1",
+        )
+        is False
     )

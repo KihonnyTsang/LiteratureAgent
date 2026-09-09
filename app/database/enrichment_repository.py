@@ -552,3 +552,231 @@ def get_numeric_mentions(
     finally:
 
         connection.close()
+
+def has_current_numeric_scan(
+    *,
+    document_id: str,
+    content_hash: str,
+    detector_version: str,
+) -> bool:
+    """
+    判断当前 PDF 内容是否已经被指定版本
+    Numeric Scanner 成功扫描。
+
+    MOVED：
+        content_hash 不变
+        -> True
+
+    MODIFIED：
+        content_hash 改变
+        -> False
+    """
+
+    connection = get_connection()
+
+    try:
+
+        cursor = connection.execute(
+            """
+            SELECT 1
+
+            FROM numeric_scan_runs
+
+            WHERE document_id = ?
+              AND detector_version = ?
+              AND content_hash = ?
+              AND status = 'success'
+
+            LIMIT 1
+            """,
+            (
+                document_id,
+                detector_version,
+                content_hash,
+            ),
+        )
+
+        return (
+            cursor.fetchone()
+            is not None
+        )
+
+    finally:
+
+        connection.close()
+
+
+def replace_numeric_scan_result(
+    *,
+    document_id: str,
+    content_hash: str,
+    detector_version: str,
+    mentions: list[dict],
+) -> None:
+    """
+    原子保存一次完整 Numeric Scan。
+
+    同一个事务内：
+
+    1. 删除该 detector version 的旧 mentions
+    2. 写入新的 mentions
+    3. 更新 numeric_scan_runs
+
+    即使 mentions == []，
+    也记录 success + mention_count = 0。
+    """
+
+    connection = get_connection()
+
+    try:
+
+        connection.execute(
+            """
+            DELETE FROM numeric_mentions
+
+            WHERE document_id = ?
+              AND detector_version = ?
+            """,
+            (
+                document_id,
+                detector_version,
+            ),
+        )
+
+        records = []
+
+        for mention in mentions:
+
+            records.append(
+                (
+                    document_id,
+
+                    mention[
+                        "page_number"
+                    ],
+
+                    mention.get(
+                        "source_chunk_id"
+                    ),
+
+                    mention[
+                        "mention_key"
+                    ],
+
+                    mention[
+                        "raw_text"
+                    ],
+
+                    mention.get(
+                        "value_type",
+                        "scalar",
+                    ),
+
+                    mention.get(
+                        "raw_value"
+                    ),
+
+                    mention.get(
+                        "raw_value_min"
+                    ),
+
+                    mention.get(
+                        "raw_value_max"
+                    ),
+
+                    mention.get(
+                        "raw_unit"
+                    ),
+
+                    mention.get(
+                        "sentence_text"
+                    ),
+
+                    mention.get(
+                        "context_text"
+                    ),
+
+                    detector_version,
+                )
+            )
+
+        if records:
+
+            connection.executemany(
+                """
+                INSERT INTO numeric_mentions (
+                    document_id,
+                    page_number,
+                    source_chunk_id,
+                    mention_key,
+                    raw_text,
+                    value_type,
+                    raw_value,
+                    raw_value_min,
+                    raw_value_max,
+                    raw_unit,
+                    sentence_text,
+                    context_text,
+                    detector_version
+                )
+
+                VALUES (
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?
+                )
+                """,
+                records,
+            )
+
+        connection.execute(
+            """
+            INSERT INTO numeric_scan_runs (
+                document_id,
+                detector_version,
+                content_hash,
+                status,
+                mention_count
+            )
+
+            VALUES (
+                ?, ?, ?, 'success', ?
+            )
+
+            ON CONFLICT(
+                document_id,
+                detector_version
+            )
+
+            DO UPDATE SET
+
+                content_hash =
+                    excluded.content_hash,
+
+                status =
+                    'success',
+
+                mention_count =
+                    excluded.mention_count,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+            """,
+            (
+                document_id,
+                detector_version,
+                content_hash,
+                len(mentions),
+            ),
+        )
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+        raise
+
+    finally:
+
+        connection.close()

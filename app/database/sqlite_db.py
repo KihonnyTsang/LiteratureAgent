@@ -418,6 +418,65 @@ def init_db():
         )
         """
     )
+    # ========================================================
+    # Numeric Scan Runs
+    #
+    # 记录某篇文档是否已经被某版本
+    # Numeric Mention Detector 完整扫描。
+    #
+    # 即使 mention_count = 0，
+    # 仍然属于有效成功结果。
+    #
+    # content_hash 用于判断 PDF 内容是否发生变化。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS numeric_scan_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            document_id TEXT NOT NULL,
+
+            detector_version TEXT NOT NULL,
+
+            content_hash TEXT NOT NULL,
+
+            status TEXT NOT NULL
+                DEFAULT 'success',
+
+            mention_count INTEGER NOT NULL
+                DEFAULT 0,
+
+            created_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (document_id)
+                REFERENCES documents(id)
+                ON DELETE CASCADE,
+
+            UNIQUE(
+                document_id,
+                detector_version
+            )
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_numeric_scan_runs_lookup
+        ON numeric_scan_runs(
+            document_id,
+            detector_version,
+            content_hash,
+            status
+        )
+        """
+    )
     connection.commit()
     connection.close()
 
