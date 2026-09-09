@@ -1,3 +1,5 @@
+import re
+
 from dataclasses import dataclass
 
 from app.enrichment.unit_signature import (
@@ -673,6 +675,80 @@ def get_candidate_metric_keys(
     )
 
 
+def normalize_metric_context_text(
+    text: str,
+) -> str:
+    """
+    将 PDF extraction 产生的排版噪声转换成
+    更稳定的 lexical matching representation。
+
+    例如：
+
+        power den- sity
+        -> power density
+
+        open-circuit voltage
+        -> open circuit voltage
+
+        open−circuit voltage
+        -> open circuit voltage
+
+    这里只用于 context routing，
+    不修改数据库中的原始 evidence。
+    """
+
+    normalized = text.lower()
+
+    normalized = (
+        normalized
+        .replace(
+            "−",
+            "-",
+        )
+        .replace(
+            "–",
+            "-",
+        )
+        .replace(
+            "—",
+            "-",
+        )
+    )
+
+    # PDF line wrapping:
+    #
+    # den- sity -> density
+    # maxi- mum  -> maximum
+    normalized = re.sub(
+        r"""
+        (?<=\w)
+        -
+        \s+
+        (?=\w)
+        """,
+        "",
+        normalized,
+        flags=re.VERBOSE,
+    )
+
+    # 剩余真正的 lexical hyphen
+    # 统一为空格：
+    #
+    # open-circuit
+    # -> open circuit
+    normalized = normalized.replace(
+        "-",
+        " ",
+    )
+
+    normalized = re.sub(
+        r"\s+",
+        " ",
+        normalized,
+    ).strip()
+
+    return normalized
+
 def score_metric_context(
     *,
     metric_key: str,
@@ -687,8 +763,10 @@ def score_metric_context(
     negative term:
         -3
 
-    这里只用于 routing / preview，
-    不是最终 classifier confidence。
+    注意：
+
+    score 只是 routing evidence，
+    score == 0 绝不能被视为 classification。
     """
 
     spec = get_metric_spec(
@@ -696,9 +774,9 @@ def score_metric_context(
     )
 
     normalized_text = (
-        " "
-        + text.lower()
-        + " "
+        normalize_metric_context_text(
+            text
+        )
     )
 
     score = 0
@@ -707,8 +785,14 @@ def score_metric_context(
         spec.positive_terms
     ):
 
+        normalized_term = (
+            normalize_metric_context_text(
+                term
+            )
+        )
+
         if (
-            term.lower()
+            normalized_term
             in normalized_text
         ):
 
@@ -718,8 +802,14 @@ def score_metric_context(
         spec.negative_terms
     ):
 
+        normalized_term = (
+            normalize_metric_context_text(
+                term
+            )
+        )
+
         if (
-            term.lower()
+            normalized_term
             in normalized_text
         ):
 
@@ -787,3 +877,55 @@ def rank_metric_candidates(
             item[0],
         ),
     )
+
+def select_metric_candidate(
+    *,
+    raw_unit: str,
+    text: str,
+    min_score: int = 1,
+) -> str | None:
+    """
+    从 deterministic routing 结果中选择
+    高置信 metric。
+
+    返回 None 表示：
+
+        unsupported
+        无正向 lexical evidence
+        top candidate 并列
+
+    绝不使用 alphabetical tie-break
+    伪造 classification。
+    """
+
+    ranked = rank_metric_candidates(
+        raw_unit=raw_unit,
+        text=text,
+    )
+
+    if not ranked:
+
+        return None
+
+    top_key, top_score = (
+        ranked[0]
+    )
+
+    if top_score < min_score:
+
+        return None
+
+    if len(ranked) > 1:
+
+        second_score = (
+            ranked[1][1]
+        )
+
+        if (
+            second_score
+            == top_score
+        ):
+
+            return None
+
+    return top_key

@@ -2,6 +2,7 @@ from app.enrichment.metric_ontology import (
     get_candidate_metric_keys,
     rank_metric_candidates,
     resolve_metric_alias,
+    select_metric_candidate,
 )
 
 from app.enrichment.unit_signature import (
@@ -235,4 +236,67 @@ def test_piezoelectric_d33_candidate():
 
     assert ranked[0][0] == (
         "piezoelectric_charge_coefficient"
+    )
+
+def test_pdf_hyphenation_does_not_break_power_density():
+
+    ranked = rank_metric_candidates(
+        raw_unit="mW/cm2",
+
+        text=(
+            "We calculated the theoretical "
+            "maximum power den- sity "
+            "of 8.22 mW/cm2."
+        ),
+    )
+
+    assert ranked
+
+    assert (
+        ranked[0][0]
+        == "power_density"
+    )
+
+    assert (
+        ranked[0][1]
+        > 0
+    )
+
+
+def test_zero_score_candidate_abstains():
+
+    selected = (
+        select_metric_candidate(
+            raw_unit="J/cm3",
+
+            text=(
+                "The values reached "
+                "560 MV/m and "
+                "14.2 J/cm3, "
+                "respectively."
+            ),
+        )
+    )
+
+    assert selected is None
+
+
+def test_strong_incident_solar_context_can_be_selected():
+
+    selected = (
+        select_metric_candidate(
+            raw_unit="mW/cm2",
+
+            text=(
+                "An AM 1.5 solar simulator "
+                "provided an incident solar "
+                "power density of "
+                "100 mW/cm2."
+            ),
+        )
+    )
+
+    assert (
+        selected
+        == "incident_power_density"
     )
