@@ -12,8 +12,32 @@ from app.database.enrichment_repository import (
 )
 
 
-DETECTOR_VERSION = "numeric-v1"
+DETECTOR_VERSION = "numeric-v2"
 
+
+# ============================================================
+# PDF extraction control characters
+#
+# Some PDFs contain invisible C0 control characters inside
+# otherwise valid scientific units, for example:
+#
+#     cm\x032
+#
+# visually rendered as:
+#
+#     cm2
+#
+# These characters are extraction artifacts rather than
+# semantic delimiters.
+# ============================================================
+
+PDF_IGNORABLE_CONTROL_PATTERN = (
+    r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]*"
+)
+
+PDF_IGNORABLE_CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]"
+)
 
 # ============================================================
 # Numeric grammar
@@ -252,10 +276,41 @@ def _build_unit_atom_pattern(
         m + V
     """
 
+    # --------------------------------------------------------
+    # Unicode micro aliases
+    #
+    # Scientific PDFs commonly contain either:
+    #
+    #     μ  U+03BC GREEK SMALL LETTER MU
+    #     µ  U+00B5 MICRO SIGN
+    #
+    # They are visually almost identical but regex matching
+    # treats them as different characters.
+    #
+    # Keep UNIT_BASES canonical and generate aliases here.
+    # --------------------------------------------------------
+
+    unit_bases = set(
+        UNIT_BASES
+    )
+
+    for unit in tuple(
+        unit_bases
+    ):
+
+        if "μ" in unit:
+
+            unit_bases.add(
+                unit.replace(
+                    "μ",
+                    "µ",
+                )
+            )
+
     escaped = [
         re.escape(unit)
         for unit in sorted(
-            UNIT_BASES,
+            unit_bases,
             key=len,
             reverse=True,
         )
@@ -275,11 +330,26 @@ def _build_unit_atom_pattern(
     # cm−2
     # cm^-2
     #
-    exponent = r"""
+    exponent = rf"""
     (?:
-        \^?[+\-−]?\d+
-        |
-        [⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+
+        {PDF_IGNORABLE_CONTROL_PATTERN}
+
+        (?:
+            \^?
+            {PDF_IGNORABLE_CONTROL_PATTERN}
+
+            [+\-−]?
+            {PDF_IGNORABLE_CONTROL_PATTERN}
+
+            \d+
+
+            |
+
+            [⁺⁻]?
+            {PDF_IGNORABLE_CONTROL_PATTERN}
+
+            [⁰¹²³⁴⁵⁶⁷⁸⁹]+
+        )
     )?
     """
 
@@ -322,7 +392,8 @@ UNIT_PATTERN = rf"""
     {UNIT_ATOM_PATTERN}
 )*
 
-# 单位不能只是普通英文单词的前缀。
+# 单位不能只是普通英文单词或更长
+# alphanumeric token 的前缀。
 #
 # 防止：
 #
@@ -330,12 +401,16 @@ UNIT_PATTERN = rf"""
 #        ↓
 #       3 s
 #
-# sample 5 seconds
-#          ↓
-#         5 s
+# 以及：
 #
-# 这种误匹配。
-(?![A-Za-z])
+# 8.22 mW cm2
+#          ↓
+#         cm
+#
+# 当完整 cm2 因回溯没有被采用时，
+# 不允许退化成 prefix match。
+#
+(?![A-Za-z0-9])
 """
 
 
@@ -490,16 +565,25 @@ def normalize_unit_text(
     text: str,
 ) -> str:
     """
-    只做显示层面的 whitespace normalization。
+    只做显示层面的 whitespace / PDF artifact normalization。
 
     这里不执行 Pint unit conversion。
     """
 
-    return re.sub(
+    cleaned = (
+        PDF_IGNORABLE_CONTROL_RE.sub(
+            "",
+            text,
+        )
+    )
+
+    cleaned = re.sub(
         r"\s+",
         " ",
-        text.strip(),
+        cleaned,
     )
+
+    return cleaned.strip()
 
 
 def extract_sentence(
