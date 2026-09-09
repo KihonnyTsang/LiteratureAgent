@@ -73,6 +73,20 @@ def update_unit_signature_cache(
         signatures
     )
 
+    current_raw_unit_set = set(
+        raw_units
+    )
+
+    cached_current_units = (
+            current_raw_unit_set
+            & cached_units
+    )
+
+    stale_cached_units = (
+            cached_units
+            - current_raw_unit_set
+    )
+
     return {
         "detector_version":
             detector_version,
@@ -81,18 +95,30 @@ def update_unit_signature_cache(
             normalizer_version,
 
         "raw_unit_count":
-            len(raw_units),
+            len(
+                current_raw_unit_set
+            ),
 
         "cached_unit_count":
-            len(cached_units),
+            len(
+                cached_current_units
+            ),
 
         "processed_unit_count":
-            len(pending_units),
+            len(
+                signatures
+            ),
+
+        "stale_cached_unit_count":
+            len(
+                stale_cached_units
+            ),
     }
 
 
 def print_statistics(
     *,
+    detector_version: str,
     normalizer_version: str,
     top_dimensions: int,
     invalid_examples: int,
@@ -103,6 +129,21 @@ def print_statistics(
             normalizer_version
         )
     )
+
+    current_raw_units = set(
+        get_distinct_numeric_units(
+            detector_version=(
+                detector_version
+            )
+        )
+    )
+
+    rows = [
+        row
+        for row in rows
+        if row["raw_unit"]
+        in current_raw_units
+    ]
 
     status_counts = Counter(
         row["parse_status"]
@@ -276,6 +317,10 @@ def main() -> None:
             )
 
     print_statistics(
+        detector_version=(
+            args.detector_version
+        ),
+
         normalizer_version=(
             args.normalizer_version
         ),
