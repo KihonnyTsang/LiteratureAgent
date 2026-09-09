@@ -780,3 +780,244 @@ def replace_numeric_scan_result(
     finally:
 
         connection.close()
+
+def get_distinct_numeric_units(
+    *,
+    detector_version: str,
+) -> list[str]:
+    """
+    获取某个 Numeric Scanner version
+    已发现的全部 raw units。
+    """
+
+    connection = get_connection()
+
+    try:
+
+        rows = connection.execute(
+            """
+            SELECT DISTINCT raw_unit
+
+            FROM numeric_mentions
+
+            WHERE detector_version = ?
+              AND raw_unit IS NOT NULL
+              AND TRIM(raw_unit) != ''
+
+            ORDER BY raw_unit
+            """,
+            (
+                detector_version,
+            ),
+        ).fetchall()
+
+        return [
+            row[0]
+            for row in rows
+        ]
+
+    finally:
+
+        connection.close()
+
+
+def get_current_unit_signature_units(
+    *,
+    normalizer_version: str,
+) -> set[str]:
+    """
+    获取已经由当前 normalizer version
+    完成解析的 raw units。
+    """
+
+    connection = get_connection()
+
+    try:
+
+        rows = connection.execute(
+            """
+            SELECT raw_unit
+
+            FROM unit_signatures
+
+            WHERE normalizer_version = ?
+            """,
+            (
+                normalizer_version,
+            ),
+        ).fetchall()
+
+        return {
+            row[0]
+            for row in rows
+        }
+
+    finally:
+
+        connection.close()
+
+
+def upsert_unit_signatures(
+    signatures: list[dict],
+) -> None:
+    """
+    批量保存 Unit Signatures。
+    """
+
+    if not signatures:
+
+        return
+
+    connection = get_connection()
+
+    try:
+
+        records = [
+            (
+                item[
+                    "raw_unit"
+                ],
+
+                item[
+                    "normalized_unit_text"
+                ],
+
+                item[
+                    "parse_status"
+                ],
+
+                item.get(
+                    "dimensionality"
+                ),
+
+                item.get(
+                    "base_unit"
+                ),
+
+                item.get(
+                    "scale_to_base"
+                ),
+
+                item.get(
+                    "parse_error"
+                ),
+
+                item[
+                    "normalizer_version"
+                ],
+            )
+            for item
+            in signatures
+        ]
+
+        connection.executemany(
+            """
+            INSERT INTO unit_signatures (
+                raw_unit,
+                normalized_unit_text,
+                parse_status,
+                dimensionality,
+                base_unit,
+                scale_to_base,
+                parse_error,
+                normalizer_version
+            )
+
+            VALUES (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?
+            )
+
+            ON CONFLICT(raw_unit)
+            DO UPDATE SET
+
+                normalized_unit_text =
+                    excluded.normalized_unit_text,
+
+                parse_status =
+                    excluded.parse_status,
+
+                dimensionality =
+                    excluded.dimensionality,
+
+                base_unit =
+                    excluded.base_unit,
+
+                scale_to_base =
+                    excluded.scale_to_base,
+
+                parse_error =
+                    excluded.parse_error,
+
+                normalizer_version =
+                    excluded.normalizer_version,
+
+                updated_at =
+                    CURRENT_TIMESTAMP
+            """,
+            records,
+        )
+
+        connection.commit()
+
+    except Exception:
+
+        connection.rollback()
+        raise
+
+    finally:
+
+        connection.close()
+
+
+def get_unit_signature_rows(
+    *,
+    normalizer_version: str | None = None,
+) -> list[dict]:
+    """
+    获取 Unit Signature vocabulary。
+    """
+
+    connection = get_connection()
+
+    connection.row_factory = (
+        sqlite3.Row
+    )
+
+    try:
+
+        sql = """
+        SELECT *
+        FROM unit_signatures
+        WHERE 1 = 1
+        """
+
+        parameters = []
+
+        if normalizer_version is not None:
+
+            sql += """
+            AND normalizer_version = ?
+            """
+
+            parameters.append(
+                normalizer_version
+            )
+
+        sql += """
+        ORDER BY raw_unit
+        """
+
+        rows = connection.execute(
+            sql,
+            parameters,
+        ).fetchall()
+
+        return [
+            dict(row)
+            for row in rows
+        ]
+
+    finally:
+
+        connection.close()

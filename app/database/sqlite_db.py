@@ -477,6 +477,72 @@ def init_db():
         )
         """
     )
+
+    # ========================================================
+    # Unit Signatures
+    #
+    # 对 Numeric Scanner 发现的 raw_unit 建立
+    # deterministic unit vocabulary cache。
+    #
+    # 注意：
+    #
+    # dimensionality 不是 metric。
+    #
+    # 例如：
+    #
+    #     Pa
+    #     J/m³
+    #
+    # 可以具有相同 physical dimensionality，
+    # 但语义完全不同。
+    # ========================================================
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS unit_signatures (
+            raw_unit TEXT PRIMARY KEY,
+
+            normalized_unit_text TEXT NOT NULL,
+
+            parse_status TEXT NOT NULL,
+
+            dimensionality TEXT,
+
+            base_unit TEXT,
+
+            scale_to_base REAL,
+
+            parse_error TEXT,
+
+            normalizer_version TEXT NOT NULL,
+
+            updated_at TIMESTAMP
+                DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_unit_signatures_status
+        ON unit_signatures(
+            normalizer_version,
+            parse_status
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE INDEX IF NOT EXISTS
+            idx_unit_signatures_dimension
+        ON unit_signatures(
+            normalizer_version,
+            dimensionality
+        )
+        """
+    )
     connection.commit()
     connection.close()
 
