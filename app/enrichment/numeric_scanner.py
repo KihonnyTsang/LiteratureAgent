@@ -31,13 +31,6 @@ DETECTOR_VERSION = "numeric-v2"
 # semantic delimiters.
 # ============================================================
 
-PDF_IGNORABLE_CONTROL_PATTERN = (
-    r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]*"
-)
-
-PDF_IGNORABLE_CONTROL_RE = re.compile(
-    r"[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]"
-)
 
 # ============================================================
 # Numeric grammar
@@ -330,26 +323,11 @@ def _build_unit_atom_pattern(
     # cm−2
     # cm^-2
     #
-    exponent = rf"""
+    exponent = r"""
     (?:
-        {PDF_IGNORABLE_CONTROL_PATTERN}
-
-        (?:
-            \^?
-            {PDF_IGNORABLE_CONTROL_PATTERN}
-
-            [+\-−]?
-            {PDF_IGNORABLE_CONTROL_PATTERN}
-
-            \d+
-
-            |
-
-            [⁺⁻]?
-            {PDF_IGNORABLE_CONTROL_PATTERN}
-
-            [⁰¹²³⁴⁵⁶⁷⁸⁹]+
-        )
+        \^?[+\-−]?\d+
+        |
+        [⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+
     )?
     """
 
@@ -410,7 +388,11 @@ UNIT_PATTERN = rf"""
 # 当完整 cm2 因回溯没有被采用时，
 # 不允许退化成 prefix match。
 #
-(?![A-Za-z0-9])
+(?!
+    [A-Za-z0-9]
+    |
+    [\x00-\x08\x0B\x0C\x0E-\x1F\x7F]+\d
+)
 """
 
 
@@ -565,22 +547,16 @@ def normalize_unit_text(
     text: str,
 ) -> str:
     """
-    只做显示层面的 whitespace / PDF artifact normalization。
+    只做显示层面的 whitespace normalization。
 
-    这里不执行 Pint unit conversion。
+    这里不执行 Pint unit conversion，
+    也不猜测 PDF control character 的科学含义。
     """
-
-    cleaned = (
-        PDF_IGNORABLE_CONTROL_RE.sub(
-            "",
-            text,
-        )
-    )
 
     cleaned = re.sub(
         r"\s+",
         " ",
-        cleaned,
+        text,
     )
 
     return cleaned.strip()

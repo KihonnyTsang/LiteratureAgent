@@ -78,7 +78,7 @@ def test_existing_greek_mu_behavior_is_preserved():
         == "μW/cm2"
     )
 
-def test_pdf_control_character_inside_unit_exponent():
+def test_pdf_control_character_does_not_invent_unit_exponent():
 
     match = get_scalar_match(
         "power density of "
@@ -90,14 +90,21 @@ def test_pdf_control_character_inside_unit_exponent():
         == "8.22"
     )
 
+    # U+0003 的语义未知。
+    #
+    # Scanner 不允许：
+    #
+    #     cm\x032
+    #
+    # 被静默转换成：
+    #
+    #     cm2
+    #
+    # 因为那会把一个可能的 cm^-2
+    # 误解释成 cm^2。
     assert (
         normalize_unit_text(
             match.group("unit")
         )
-        == "mW cm2"
-    )
-
-    assert (
-        match.group(0)
-        == "8.22 mW cm\x032"
+        == "mW"
     )
