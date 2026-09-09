@@ -1771,3 +1771,124 @@ def get_pending_provenance_input_rows(
     finally:
 
         connection.close()
+
+def get_pending_semantic_provenance_input_rows(
+    *,
+    detector_version: str,
+    metric_classifier_version: str,
+    metric_ontology_version: str,
+    normalizer_version: str,
+    deterministic_classifier_version: str,
+    provenance_ontology_version: str,
+    semantic_classifier_version: str,
+) -> list[dict]:
+
+    connection = get_connection()
+
+    connection.row_factory = (
+        sqlite3.Row
+    )
+
+    try:
+
+        rows = connection.execute(
+            """
+            SELECT
+                nmc.id
+                    AS id,
+
+                nmc.metric_key
+                    AS metric_key,
+
+                nm.id
+                    AS mention_id,
+
+                nm.document_id
+                    AS document_id,
+
+                nm.page_number
+                    AS page_number,
+
+                nm.raw_text
+                    AS raw_text,
+
+                nm.raw_value
+                    AS raw_value,
+
+                nm.raw_unit
+                    AS raw_unit,
+
+                nm.sentence_text
+                    AS sentence_text,
+
+                nm.context_text
+                    AS context_text
+
+            FROM numeric_metric_classifications
+                AS nmc
+
+            JOIN numeric_mentions AS nm
+              ON nm.id =
+                 nmc.mention_id
+
+            JOIN numeric_provenance_classifications
+                AS deterministic
+
+              ON deterministic.metric_classification_id =
+                    nmc.id
+
+             AND deterministic.provenance_classifier_version = ?
+
+             AND deterministic.provenance_ontology_version = ?
+
+            LEFT JOIN numeric_provenance_classifications
+                AS semantic
+
+              ON semantic.metric_classification_id =
+                    nmc.id
+
+             AND semantic.provenance_classifier_version = ?
+
+             AND semantic.provenance_ontology_version = ?
+
+            WHERE nm.detector_version = ?
+
+              AND nmc.classifier_version = ?
+
+              AND nmc.ontology_version = ?
+
+              AND nmc.normalizer_version = ?
+
+              AND nmc.status = 'classified'
+
+              AND deterministic.status = 'unresolved'
+
+              AND semantic.id IS NULL
+
+            ORDER BY
+                nm.document_id,
+                nm.page_number,
+                nm.id
+            """,
+            (
+                deterministic_classifier_version,
+                provenance_ontology_version,
+
+                semantic_classifier_version,
+                provenance_ontology_version,
+
+                detector_version,
+                metric_classifier_version,
+                metric_ontology_version,
+                normalizer_version,
+            ),
+        ).fetchall()
+
+        return [
+            dict(row)
+            for row in rows
+        ]
+
+    finally:
+
+        connection.close()
