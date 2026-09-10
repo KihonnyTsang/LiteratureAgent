@@ -9,9 +9,6 @@ from app.agent.answer_schemas import (
     AnswerContext,
 )
 
-from app.agent.answer_renderer import (
-    build_warnings,
-)
 
 class WriterContext(BaseModel):
     """
@@ -175,9 +172,7 @@ def build_writer_context(
             )
         ),
 
-        warnings=build_warnings(
-            context
-        ),
+        warnings=[],
 
         plot_generated=(
             context.plot_path
