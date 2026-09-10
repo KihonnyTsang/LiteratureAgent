@@ -716,16 +716,137 @@ def build_evidence_rows(
 # Quality warnings
 # ============================================================
 
+def format_coverage_ratio(
+    value: Any,
+) -> str | None:
+    """
+    将 0~1 的 coverage ratio
+    确定性格式化为百分比文本。
+
+    不调用 LLM。
+    """
+
+    if (
+        isinstance(value, bool)
+        or not isinstance(
+            value,
+            (int, float),
+        )
+    ):
+        return None
+
+    if (
+        value < 0
+        or value > 1
+    ):
+        return None
+
+    return f"{value * 100:.1f}%"
+
+
+def build_coverage_warning(
+    context: AnswerContext,
+) -> str | None:
+    """
+    根据统一 metadata coverage contract
+    生成确定性数据覆盖提示。
+
+    这里只认通用 metadata：
+
+    coverage_complete
+    provenance_coverage_ratio
+    coverage_ratio
+
+    不知道具体 metric，
+    也不关心是不是 output_power。
+    """
+
+    if (
+        context.metadata.get(
+            "coverage_complete"
+        )
+        is not False
+    ):
+        return None
+
+    provenance_ratio = (
+        format_coverage_ratio(
+            context.metadata.get(
+                "provenance_coverage_ratio"
+            )
+        )
+    )
+
+    if provenance_ratio is not None:
+
+        return (
+            "当前结构化结果的来源归属覆盖"
+            "尚未完整"
+            f"（已解析候选约占 {provenance_ratio}）；"
+            "仍存在未解析候选，"
+            "因此结果仅代表当前已确认数据，"
+            "不应视为完整全库结论。"
+        )
+
+    coverage_ratio = (
+        format_coverage_ratio(
+            context.metadata.get(
+                "coverage_ratio"
+            )
+        )
+    )
+
+    if coverage_ratio is not None:
+
+        return (
+            "当前查询的数据覆盖尚未完整"
+            f"（覆盖率约为 {coverage_ratio}）；"
+            "结果仅代表当前可用数据，"
+            "不应视为完整全库结论。"
+        )
+
+    return (
+        "当前查询的数据覆盖尚未完整；"
+        "结果仅代表当前可用或已确认数据，"
+        "不应视为完整全库结论。"
+    )
+
+
 def build_warnings(
     context: AnswerContext,
 ) -> list[str]:
     """
-    根据 ColumnRole 生成通用质量提示。
+    生成通用、确定性质量提示。
 
-    不知道具体字段名。
+    来源：
+
+    1. metadata coverage contract
+    2. ColumnRole quality_flag / quality_issue
+
+    不知道具体 metric 或业务问题。
     """
 
     warnings = []
+
+    # ========================================================
+    # 1. Dataset-level coverage warning
+    # ========================================================
+
+    coverage_warning = (
+        build_coverage_warning(
+            context
+        )
+    )
+
+    if coverage_warning:
+
+        warnings.append(
+            coverage_warning
+        )
+
+    # ========================================================
+    # 2. Row-level quality warnings
+    # ========================================================
 
     dimension_column = next(
         (
@@ -773,10 +894,6 @@ def build_warnings(
                 column.field
             )
 
-            # ------------------------------------------------
-            # quality_flag=False
-            # ------------------------------------------------
-
             if (
                 column.role
                 == "quality_flag"
@@ -787,10 +904,6 @@ def build_warnings(
                     f"{subject_prefix}"
                     f"{column.label}=False。"
                 )
-
-            # ------------------------------------------------
-            # quality_issue 有具体内容
-            # ------------------------------------------------
 
             elif (
                 column.role
@@ -805,7 +918,6 @@ def build_warnings(
                 )
 
     return warnings
-
 
 # ============================================================
 # FinalAnswer
