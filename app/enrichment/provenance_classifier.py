@@ -9,7 +9,7 @@ from app.enrichment.provenance_ontology import (
 
 
 PROVENANCE_CLASSIFIER_VERSION = (
-    "provenance-classifier-v1"
+    "provenance-classifier-v2"
 )
 
 MIN_PROVENANCE_SCORE = 1

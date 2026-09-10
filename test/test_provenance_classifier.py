@@ -7,6 +7,7 @@ def make_row(
     *,
     row_id: int,
     sentence: str,
+    context: str | None = None,
 ) -> dict:
 
     return {
@@ -17,7 +18,11 @@ def make_row(
             sentence,
 
         "context_text":
-            sentence,
+            (
+                sentence
+                if context is None
+                else context
+            ),
     }
 
 
@@ -216,4 +221,202 @@ def test_according_to_does_not_override_explicit_we_statement():
     assert (
         result.provenance
         == "author_result"
+    )
+
+
+def test_present_work_is_explicit_author_result():
+
+    result = classify_provenance(
+        make_row(
+            row_id=20,
+            sentence=(
+                "In the present work, "
+                "the device achieved "
+                "the reported value."
+            ),
+        )
+    )
+
+    assert result.status == "classified"
+
+    assert (
+        result.provenance
+        == "author_result"
+    )
+
+
+def test_our_device_is_explicit_author_result():
+
+    result = classify_provenance(
+        make_row(
+            row_id=21,
+            sentence=(
+                "Our device generated "
+                "the measured output."
+            ),
+        )
+    )
+
+    assert result.status == "classified"
+
+    assert (
+        result.provenance
+        == "author_result"
+    )
+
+
+def test_this_work_language_alone_abstains():
+
+    result = classify_provenance(
+        make_row(
+            row_id=22,
+            sentence=(
+                "This work demonstrates "
+                "that the prototype can "
+                "produce the reported value."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "unresolved"
+    )
+
+    assert (
+        result.provenance
+        == "uncertain"
+    )
+
+
+def test_this_study_language_alone_abstains():
+
+    result = classify_provenance(
+        make_row(
+            row_id=23,
+            sentence=(
+                "In this study, the "
+                "prototype delivered "
+                "the maximum value."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "unresolved"
+    )
+
+    assert (
+        result.provenance
+        == "uncertain"
+    )
+
+
+def test_prototype_language_alone_abstains():
+
+    result = classify_provenance(
+        make_row(
+            row_id=24,
+            sentence=(
+                "Under the simulated "
+                "excitation, the prototype "
+                "delivered a maximum value."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "unresolved"
+    )
+
+    assert (
+        result.provenance
+        == "uncertain"
+    )
+
+
+def test_generic_review_summary_abstains():
+
+    result = classify_provenance(
+        make_row(
+            row_id=25,
+            sentence=(
+                "Generally the power output "
+                "from in vivo tests is "
+                "under the reported value."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "unresolved"
+    )
+
+    assert (
+        result.provenance
+        == "uncertain"
+    )
+
+
+def test_et_al_with_numeric_citation_and_investigate_is_cited():
+
+    result = classify_provenance(
+        make_row(
+            row_id=26,
+            sentence=(
+                "X. Wang et al. [75] "
+                "investigate a standalone "
+                "energy-harvesting device."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "classified"
+    )
+
+    assert (
+        result.provenance
+        == "cited_literature"
+    )
+
+
+def test_external_attribution_in_context_overrides_neutral_sentence():
+
+    result = classify_provenance(
+        make_row(
+            row_id=27,
+
+            sentence=(
+                "As the quantity of units "
+                "rises, so does the output, "
+                "with the largest measured "
+                "value."
+            ),
+
+            context=(
+                "As the quantity of units "
+                "rises, so does the output, "
+                "with the largest measured "
+                "value. "
+                "In this work, X. Wang "
+                "et al. [75] investigate "
+                "a standalone, completely "
+                "encased generator."
+            ),
+        )
+    )
+
+    assert (
+        result.status
+        == "classified"
+    )
+
+    assert (
+        result.provenance
+        == "cited_literature"
     )

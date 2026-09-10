@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 
 PROVENANCE_ONTOLOGY_VERSION = (
-    "provenance-ontology-v2"
+    "provenance-ontology-v3"
 )
 
 
@@ -47,6 +47,7 @@ PROVENANCE_ONTOLOGY = {
 
         rules=(
 
+            # Strong first-person current-work evidence.
             ProvenanceRule(
                 pattern=(
                     r"\bwe\s+"
@@ -63,18 +64,21 @@ PROVENANCE_ONTOLOGY = {
                     r"developed|develop|"
                     r"prepared|prepare|"
                     r"reported|report|"
+                    r"presented|present|"
                     r"show|shows"
                     r")\b"
                 ),
                 weight=4,
             ),
 
+            # Strong possessive current-work evidence.
             ProvenanceRule(
                 pattern=(
                     r"\bour\s+"
                     r"(?:"
                     r"device|devices|"
                     r"generator|generators|"
+                    r"prototype|prototypes|"
                     r"sample|samples|"
                     r"film|films|"
                     r"system|systems|"
@@ -86,29 +90,26 @@ PROVENANCE_ONTOLOGY = {
                 weight=3,
             ),
 
+            # "our work/study" is explicit ownership.
             ProvenanceRule(
                 pattern=(
                     r"\b(?:in|from)\s+"
-                    r"this\s+"
+                    r"our\s+"
                     r"(?:work|study)\b"
                 ),
                 weight=3,
             ),
 
+            # "the present work/study" refers to the current
+            # paper much more reliably than "this work/study",
+            # which is common inside literature-review prose.
             ProvenanceRule(
                 pattern=(
-                    r"\bthis\s+"
-                    r"(?:work|study)\s+"
-                    r"(?:"
-                    r"reports?|"
-                    r"demonstrates?|"
-                    r"shows?|"
-                    r"presents?|"
-                    r"achieves?|"
-                    r"obtains?"
-                    r")\b"
+                    r"\b(?:in|from)\s+"
+                    r"(?:the\s+)?present\s+"
+                    r"(?:work|study)\b"
                 ),
-                weight=4,
+                weight=3,
             ),
         ),
     ),
@@ -154,13 +155,26 @@ PROVENANCE_ONTOLOGY = {
 
             ProvenanceRule(
                 pattern=(
-                    r"\bet\s+al\.?\s+"
+                    r"\bet\s+al\.?\s*"
                     r"(?:"
-                    r"reported|"
-                    r"demonstrated|"
-                    r"achieved|"
-                    r"obtained|"
-                    r"showed"
+                    r"\[\s*\d+(?:\s*[-,]\s*\d+)*\s*\]"
+                    r"|"
+                    r"\d+"
+                    r")?"
+                    r"\s*"
+                    r"(?:"
+                    r"reported|reports|"
+                    r"demonstrated|demonstrates|"
+                    r"achieved|achieves|"
+                    r"obtained|obtains|"
+                    r"showed|shows|"
+                    r"investigated|investigate|investigates|"
+                    r"proposed|propose|proposes|"
+                    r"developed|develop|develops|"
+                    r"described|describe|describes|"
+                    r"presented|present|presents|"
+                    r"measured|measure|measures|"
+                    r"found|find|finds"
                     r")\b"
                 ),
                 weight=4,
