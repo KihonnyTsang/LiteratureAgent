@@ -716,8 +716,8 @@ def render_sidebar(
             try:
 
                 with st.spinner(
-                    "正在同步 PDF、"
-                    "Chunks 与向量索引..."
+                    "正在同步 PDF、Chunks、"
+                    "向量索引与结构化事实..."
                 ):
 
                     sync_result = (

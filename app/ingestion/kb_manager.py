@@ -35,6 +35,11 @@ PAPERS_FOLDER = (
 _SYNC_LOCK = Lock()
 
 
+from app.enrichment.sync_pipeline import (
+    update_structured_knowledge,
+)
+
+
 class KnowledgeBaseSyncInProgressError(
     RuntimeError
 ):
@@ -569,8 +574,15 @@ def update_knowledge_base(
         ↓
     Qdrant reconciliation
 
-    不执行 Fact Extraction。
+    同步完成后执行确定性的结构化知识更新：
 
+    Numeric Mentions
+    -> Unit Signatures
+    -> Metric Classification
+    -> Deterministic Provenance
+    -> Materialized Facts
+
+    不执行 Semantic Provenance。
     不调用 LLM。
     """
 
@@ -624,7 +636,13 @@ def update_knowledge_base(
         )
 
         # ====================================================
-        # 5. Final status
+        # 5. Deterministic structured enrichment
+        # ====================================================
+
+        update_structured_knowledge()
+
+        # ====================================================
+        # 6. Final status
         # ====================================================
 
         status = (
