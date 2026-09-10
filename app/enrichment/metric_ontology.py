@@ -8,7 +8,7 @@ from app.enrichment.unit_signature import (
 
 
 ONTOLOGY_VERSION = (
-    "metric-ontology-v1"
+    "metric-ontology-v2"
 )
 
 
@@ -470,7 +470,11 @@ METRIC_ONTOLOGY = {
         ),
 
     # --------------------------------------------------------
-    # Power
+    # Generic power
+    #
+    # "power" is intentionally broad. It remains the generic
+    # bucket for W-dimensional quantities that are not
+    # specifically device/system output power.
     # --------------------------------------------------------
 
     "power":
@@ -485,19 +489,93 @@ METRIC_ONTOLOGY = {
 
             aliases=(
                 "power",
-                "output_power",
-                "peak_power",
+                "generic_power",
             ),
 
             positive_terms=(
                 "power",
-                "output power",
-                "peak power",
-                "maximum power",
+                "available power",
+                "power is available",
+                "theoretical power",
+                "theoretically available power",
+                "cooling power",
+                "power consumption",
+                "input power",
+                "incident power",
+                "laser power",
+                "illumination power",
+                "heating power",
+                "dissipated power",
             ),
 
             negative_terms=(
-                "power density",
+                "output power",
+                "power output",
+                "peak power",
+                "maximum power",
+                "mean power",
+                "delivered power",
+                "generated power",
+                "harvested power",
+                "power delivered",
+                "power generated",
+                "power harvested",
+                "power for charging",
+            ),
+        ),
+
+    # --------------------------------------------------------
+    # Device / system output power
+    #
+    # Same physical dimensionality as generic power, but a
+    # different scientific semantic role.
+    # --------------------------------------------------------
+
+    "output_power":
+        MetricOntologySpec(
+            key="output_power",
+
+            display_name="输出功率",
+
+            dimension_unit="W",
+
+            canonical_unit="W",
+
+            aliases=(
+                "output_power",
+                "device_output_power",
+                "generated_power",
+                "harvested_power",
+            ),
+
+            positive_terms=(
+                "output power",
+                "power output",
+                "peak power",
+                "maximum power",
+                "mean power",
+                "delivered power",
+                "generated power",
+                "harvested power",
+                "power delivered",
+                "power generated",
+                "power harvested",
+                "power for charging",
+            ),
+
+            negative_terms=(
+                "available power",
+                "power is available",
+                "theoretical power",
+                "theoretically available power",
+                "cooling power",
+                "power consumption",
+                "input power",
+                "incident power",
+                "laser power",
+                "illumination power",
+                "heating power",
+                "dissipated power",
             ),
         ),
 

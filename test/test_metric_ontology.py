@@ -300,3 +300,193 @@ def test_strong_incident_solar_context_can_be_selected():
         selected
         == "incident_power_density"
     )
+
+
+def test_output_power_alias_is_separate_from_generic_power():
+
+    assert (
+        resolve_metric_alias(
+            "output_power"
+        )
+        == "output_power"
+    )
+
+    assert (
+        resolve_metric_alias(
+            "power"
+        )
+        == "power"
+    )
+
+
+def test_watt_candidates_include_generic_and_output_power():
+
+    candidates = (
+        candidate_keys_for_unit(
+            "mW"
+        )
+    )
+
+    assert (
+        "power"
+        in candidates
+    )
+
+    assert (
+        "output_power"
+        in candidates
+    )
+
+
+def test_output_power_contexts_select_output_power():
+
+    cases = [
+        (
+            "The device achieved a high "
+            "output power of 520 mW."
+        ),
+
+        (
+            "The generator can deliver "
+            "peak power of 44.8 mW."
+        ),
+
+        (
+            "The prototype delivered a "
+            "maximum power of 2.8 mW."
+        ),
+
+        (
+            "The power output from the "
+            "device remained under 1 mW."
+        ),
+
+        (
+            "The prototype achieved a "
+            "maximum mean power of "
+            "0.395 mW per footstep."
+        ),
+
+        (
+            "The output power of the "
+            "hybrid generator reached "
+            "0.31 mW."
+        ),
+
+        (
+            "The device can harvest a "
+            "power output of 4.95 μW."
+        ),
+
+        (
+            "The average power for "
+            "charging a capacitor was "
+            "81.8 nW."
+        ),
+    ]
+
+    for text in cases:
+
+        selected = (
+            select_metric_candidate(
+                raw_unit="mW",
+                text=text,
+            )
+        )
+
+        assert (
+            selected
+            == "output_power"
+        ), text
+
+
+def test_non_output_power_contexts_do_not_select_output_power():
+
+    cases = [
+        (
+            "The theoretically available "
+            "power was 1278 MW."
+        ),
+
+        (
+            "A total of 116 W of power "
+            "is available."
+        ),
+
+        (
+            "The maximum cooling power "
+            "was close to 0.11 W."
+        ),
+
+        (
+            "The optimized system could "
+            "reduce power consumption "
+            "to 94 mW."
+        ),
+
+        (
+            "The laser power was 60 mW."
+        ),
+
+        (
+            "The input power was 10 W."
+        ),
+
+        (
+            "The illumination power was "
+            "70 mW."
+        ),
+    ]
+
+    for text in cases:
+
+        selected = (
+            select_metric_candidate(
+                raw_unit="mW",
+                text=text,
+            )
+        )
+
+        assert (
+            selected
+            != "output_power"
+        ), text
+
+
+def test_available_power_selects_generic_power():
+
+    selected = (
+        select_metric_candidate(
+            raw_unit="MW",
+
+            text=(
+                "The theoretically available "
+                "power reached 1278 MW."
+            ),
+        )
+    )
+
+    assert (
+        selected
+        == "power"
+    )
+
+
+def test_power_consumption_selects_generic_power():
+
+    selected = (
+        select_metric_candidate(
+            raw_unit="mW",
+
+            text=(
+                "The optimized system "
+                "reduced power consumption "
+                "to 94 mW."
+            ),
+        )
+    )
+
+    assert (
+        selected
+        == "power"
+    )

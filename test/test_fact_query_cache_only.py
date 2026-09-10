@@ -43,17 +43,44 @@ def make_fact_row(
 
 
 def test_online_metric_resolution_uses_ontology_without_llm():
+
     with patch(
         "app.tools.fact_tool.resolve_metric_spec"
     ) as dynamic_resolver:
-        spec = resolve_online_metric_spec(
-            "output power"
+
+        output_spec = (
+            resolve_online_metric_spec(
+                "output power"
+            )
+        )
+
+        generic_spec = (
+            resolve_online_metric_spec(
+                "power"
+            )
         )
 
     dynamic_resolver.assert_not_called()
 
-    assert spec.key == "power"
-    assert spec.canonical_unit == "W"
+    assert (
+        output_spec.key
+        == "output_power"
+    )
+
+    assert (
+        output_spec.canonical_unit
+        == "W"
+    )
+
+    assert (
+        generic_spec.key
+        == "power"
+    )
+
+    assert (
+        generic_spec.canonical_unit
+        == "W"
+    )
 
 
 def test_query_facts_reads_structured_snapshot_only():
