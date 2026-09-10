@@ -1,5 +1,6 @@
 from app.database.sqlite_db import (
     get_all_documents,
+    get_connection,
 )
 
 from app.database.fact_repository import (
@@ -15,6 +16,17 @@ from app.extraction.fact_extractor import (
 
 from app.extraction.metric_registry import (
     METRIC_REGISTRY,
+)
+
+from app.enrichment.fact_materializer import (
+    FACT_MATERIALIZER_SCOPE,
+    FACT_MATERIALIZER_VERSION,
+)
+
+from app.enrichment.metric_ontology import (
+    METRIC_ONTOLOGY,
+    get_metric_spec as get_ontology_metric_spec,
+    resolve_metric_alias,
 )
 
 from app.extraction.metric_resolver import (
@@ -548,6 +560,293 @@ def fact_to_row(
     }
 
 
+def resolve_online_metric_spec(
+    metric: str,
+):
+    """
+    Resolve an online query metric without an LLM call.
+    """
+
+    metric_text = metric.strip()
+
+    if not metric_text:
+        raise ValueError(
+            "query_facts 的 metric 不能为空。"
+        )
+
+    normalized_text = metric_text.lower()
+
+    try:
+        metric_key = resolve_metric_alias(
+            metric_text
+        )
+
+        return get_ontology_metric_spec(
+            metric_key
+        )
+
+    except ValueError:
+        pass
+
+    exact_matches = []
+
+    for spec in METRIC_ONTOLOGY.values():
+        candidates = {
+            spec.display_name.lower(),
+            *(
+                alias.lower()
+                for alias in spec.aliases
+            ),
+            *(
+                term.lower()
+                for term in spec.positive_terms
+            ),
+        }
+
+        if normalized_text in candidates:
+            exact_matches.append(spec)
+
+    unique_exact = {
+        spec.key: spec
+        for spec in exact_matches
+    }
+
+    if len(unique_exact) == 1:
+        return next(
+            iter(unique_exact.values())
+        )
+
+    registry_matches = []
+
+    for key, spec in METRIC_REGISTRY.items():
+        display_name = spec.display_name.lower()
+
+        if (
+            normalized_text == key.lower()
+            or normalized_text == display_name
+            or normalized_text in display_name
+            or display_name in normalized_text
+        ):
+            if key in METRIC_ONTOLOGY:
+                registry_matches.append(key)
+
+    registry_matches = sorted(
+        set(registry_matches)
+    )
+
+    if len(registry_matches) == 1:
+        return get_ontology_metric_spec(
+            registry_matches[0]
+        )
+
+    raise ValueError(
+        "query_facts 只能查询已注册的 "
+        "Metric Ontology 指标："
+        f"{metric}"
+    )
+
+
+def structured_fact_snapshot_exists(
+) -> bool:
+    """
+    Return whether Structured Fact Materializer v1
+    has produced a non-empty snapshot.
+    """
+
+    ensure_facts_schema()
+
+    connection = get_connection()
+
+    try:
+        count = connection.execute(
+            """
+            SELECT COUNT(*)
+
+            FROM facts
+
+            WHERE extraction_scope = ?
+              AND extraction_version = ?
+            """,
+            (
+                FACT_MATERIALIZER_SCOPE,
+                FACT_MATERIALIZER_VERSION,
+            ),
+        ).fetchone()[0]
+
+        return bool(count)
+
+    finally:
+        connection.close()
+
+
+def load_structured_fact_rows(
+    *,
+    metric_key: str,
+) -> list[dict]:
+    """
+    Read one metric from the materialized SQLite snapshot.
+    """
+
+    ensure_facts_schema()
+
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute(
+            """
+            SELECT
+                f.*,
+                d.title AS title
+
+            FROM facts AS f
+
+            JOIN documents AS d
+              ON d.id = f.document_id
+
+            WHERE f.extraction_scope = ?
+              AND f.extraction_version = ?
+              AND f.metric_name = ?
+
+            ORDER BY
+                f.document_id,
+                f.page_number,
+                f.id
+            """,
+            (
+                FACT_MATERIALIZER_SCOPE,
+                FACT_MATERIALIZER_VERSION,
+                metric_key,
+            ),
+        )
+
+        columns = [
+            item[0]
+            for item in cursor.description
+        ]
+
+        return [
+            dict(zip(columns, row))
+            for row in cursor.fetchall()
+        ]
+
+    finally:
+        connection.close()
+
+
+def structured_fact_to_tool_row(
+    *,
+    fact_row: dict,
+    metric_spec,
+) -> dict:
+    """
+    Adapt one materialized SQLite fact to the existing
+    query_facts ToolResult contract.
+    """
+
+    normalization_error = fact_row.get(
+        "normalization_error"
+    )
+
+    normalized_unit = fact_row.get(
+        "normalized_unit"
+    )
+
+    canonical_unit = metric_spec.canonical_unit
+
+    normalization_usable = (
+        normalization_error is None
+        and
+        (
+            canonical_unit is None
+            or normalized_unit == canonical_unit
+        )
+    )
+
+    if normalization_usable:
+        value = fact_row.get(
+            "normalized_value"
+        )
+
+        value_min = fact_row.get(
+            "normalized_value_min"
+        )
+
+        value_max = fact_row.get(
+            "normalized_value_max"
+        )
+
+        unit = normalized_unit
+
+    else:
+        value = None
+        value_min = None
+        value_max = None
+        unit = None
+
+    return {
+        "document_id":
+            fact_row["document_id"],
+
+        "title":
+            fact_row.get("title"),
+
+        "value":
+            value,
+
+        "value_min":
+            value_min,
+
+        "value_max":
+            value_max,
+
+        "unit":
+            unit,
+
+        "raw_value":
+            fact_row.get("raw_value"),
+
+        "raw_value_min":
+            fact_row.get("raw_value_min"),
+
+        "raw_value_max":
+            fact_row.get("raw_value_max"),
+
+        "raw_unit":
+            fact_row.get("raw_unit"),
+
+        "value_type":
+            fact_row.get("value_type"),
+
+        "page_number":
+            fact_row.get("page_number"),
+
+        "source_chunk_id":
+            fact_row.get("source_chunk_id"),
+
+        "condition_text":
+            fact_row.get("condition_text"),
+
+        "evidence":
+            fact_row.get("evidence"),
+
+        "evidence_verified":
+            bool(
+                fact_row.get(
+                    "evidence_verified"
+                )
+            ),
+
+        "provenance":
+            fact_row.get("provenance"),
+
+        "confidence":
+            fact_row.get("confidence"),
+
+        "normalization_error":
+            normalization_error,
+    }
+
+
 def query_facts(
     metric: str,
     scope: str = "all_documents",
@@ -555,28 +854,27 @@ def query_facts(
     document_names: list[str] | None = None,
 ) -> ToolResult:
     """
-    查询已经持久化的跨论文结构化事实。
+    Query the offline Structured Fact Materializer snapshot.
 
-    重要：
-
-    query_facts 是在线查询工具，
-    不负责执行新的 LLM Fact Extraction。
-
-    工作流程：
-
-    1. 解析 Metric
-    2. 确定论文范围
-    3. 检查 Facts Cache
-    4. 只读取已经完成的 extraction cache
-    5. Cache Miss 只记录 coverage gap
-    6. 单位归一化
-    7. 返回 ToolResult + coverage metadata
-
-    新的 Fact Extraction 必须由离线
-    fact lifecycle 显式执行。
+    Online contract:
+    - SQLite only
+    - no PDF scan
+    - no Qdrant
+    - no live Fact Extraction
+    - no DeepSeek metric resolution
+    - no DeepSeek provenance classification
     """
 
-    metric_spec = resolve_tool_metric(
+    if provenance_scope not in {
+        "author_results",
+        "all_mentions",
+    }:
+        raise ValueError(
+            "未知 provenance_scope："
+            f"{provenance_scope}"
+        )
+
+    metric_spec = resolve_online_metric_spec(
         metric
     )
 
@@ -585,128 +883,143 @@ def query_facts(
         document_names=document_names,
     )
 
-    ensure_facts_schema()
+    selected_document_ids = {
+        document["id"]
+        for document in documents
+    }
 
-    rows = []
-
-    cache_hit_count = 0
-    missing_document_count = 0
-
-    # ========================================================
-    # 遍历目标论文
-    # ========================================================
-
-    for document in documents:
-
-        document_id = (
-            document["id"]
-        )
-
-        cache_exists = (
-            has_cached_extraction(
-                document_id=document_id,
-
-                metric_name=(
-                    metric_spec.key
-                ),
-
-                extraction_scope=(
-                    provenance_scope
-                ),
-
-                extraction_version=(
-                    EXTRACTION_VERSION
-                ),
-            )
-        )
-
-        # ----------------------------------------------------
-        # Cache Miss
-        #
-        # 在线 query 绝不执行新的 extraction。
-        # ----------------------------------------------------
-
-        if not cache_exists:
-
-            print(
-                f"Fact Missing："
-                f"{document['title']}"
-            )
-
-            missing_document_count += 1
-
-            continue
-
-        # ----------------------------------------------------
-        # Cache Hit
-        # ----------------------------------------------------
-
-        print(
-            f"Fact Cache："
-            f"{document['title']}"
-        )
-
-        facts = (
-            load_cached_facts(
-                document_id=document_id,
-
-                metric_name=(
-                    metric_spec.key
-                ),
-
-                extraction_scope=(
-                    provenance_scope
-                ),
-
-                extraction_version=(
-                    EXTRACTION_VERSION
-                ),
-            )
-        )
-
-        cache_hit_count += 1
-
-        # ----------------------------------------------------
-        # ExtractedFact -> ToolResult rows
-        # ----------------------------------------------------
-
-        for fact in facts:
-
-            rows.append(
-                fact_to_row(
-                    document=document,
-                    fact=fact,
-                    metric_spec=metric_spec,
-                )
-            )
-
-    # ========================================================
-    # Coverage
-    # ========================================================
-
-    document_count = len(
-        documents
+    snapshot_present = (
+        structured_fact_snapshot_exists()
     )
 
-    coverage_complete = (
-        missing_document_count
-        == 0
-    )
-
-    if document_count:
-
-        coverage_ratio = (
-            cache_hit_count
-            / document_count
-        )
+    if snapshot_present:
+        candidate_rows = [
+            row
+            for row in load_structured_fact_rows(
+                metric_key=metric_spec.key
+            )
+            if row["document_id"]
+            in selected_document_ids
+        ]
 
     else:
+        candidate_rows = []
 
-        coverage_ratio = 1.0
+    author_result_count = sum(
+        1
+        for row in candidate_rows
+        if row.get("provenance")
+        == "author_result"
+    )
 
-    # ========================================================
-    # Result
-    # ========================================================
+    cited_literature_count = sum(
+        1
+        for row in candidate_rows
+        if row.get("provenance")
+        == "cited_literature"
+    )
+
+    uncertain_count = sum(
+        1
+        for row in candidate_rows
+        if row.get("provenance")
+        == "uncertain"
+    )
+
+    resolved_provenance_count = (
+        author_result_count
+        + cited_literature_count
+    )
+
+    candidate_fact_count = len(
+        candidate_rows
+    )
+
+    if candidate_fact_count:
+        provenance_coverage_ratio = (
+            resolved_provenance_count
+            / candidate_fact_count
+        )
+    else:
+        provenance_coverage_ratio = (
+            1.0
+            if snapshot_present
+            else 0.0
+        )
+
+    provenance_coverage_complete = (
+        uncertain_count == 0
+    )
+
+    if provenance_scope == "author_results":
+        result_source_rows = [
+            row
+            for row in candidate_rows
+            if row.get("provenance")
+            == "author_result"
+        ]
+    else:
+        result_source_rows = candidate_rows
+
+    rows = [
+        structured_fact_to_tool_row(
+            fact_row=row,
+            metric_spec=metric_spec,
+        )
+        for row in result_source_rows
+    ]
+
+    comparable_fact_count = sum(
+        1
+        for row in rows
+        if (
+            row.get("value") is not None
+            or row.get("value_min") is not None
+            or row.get("value_max") is not None
+        )
+    )
+
+    normalization_error_count = sum(
+        1
+        for row in result_source_rows
+        if row.get(
+            "normalization_error"
+        )
+        is not None
+    )
+
+    document_count = len(documents)
+
+    if snapshot_present:
+        cache_hit_count = document_count
+        missing_document_count = 0
+    else:
+        cache_hit_count = 0
+        missing_document_count = document_count
+
+    materialization_coverage_ratio = (
+        1.0
+        if snapshot_present
+        else 0.0
+    )
+
+    if provenance_scope == "author_results":
+        coverage_complete = (
+            snapshot_present
+            and provenance_coverage_complete
+        )
+
+        coverage_ratio = (
+            provenance_coverage_ratio
+            if snapshot_present
+            else 0.0
+        )
+    else:
+        coverage_complete = snapshot_present
+
+        coverage_ratio = (
+            materialization_coverage_ratio
+        )
 
     return ToolResult(
         columns=FACT_COLUMNS,
@@ -721,7 +1034,7 @@ def query_facts(
 
         metadata={
             "source":
-                "facts",
+                "structured_facts",
 
             "metric_key":
                 metric_spec.key,
@@ -735,14 +1048,15 @@ def query_facts(
             "provenance_scope":
                 provenance_scope,
 
-            # --------------------------------------------
-            # Backward-compatible fields
-            # --------------------------------------------
+            "materializer_scope":
+                FACT_MATERIALIZER_SCOPE,
+
+            "materializer_version":
+                FACT_MATERIALIZER_VERSION,
 
             "cache_hit_count":
                 cache_hit_count,
 
-            # query_facts 永远不再做 extraction。
             "extraction_count":
                 0,
 
@@ -751,10 +1065,6 @@ def query_facts(
 
             "fact_count":
                 len(rows),
-
-            # --------------------------------------------
-            # Coverage contract
-            # --------------------------------------------
 
             "cached_document_count":
                 cache_hit_count,
@@ -768,9 +1078,38 @@ def query_facts(
             "coverage_ratio":
                 coverage_ratio,
 
-            # --------------------------------------------
-            # 数学字段 contract
-            # --------------------------------------------
+            "snapshot_present":
+                snapshot_present,
+
+            "materialization_coverage_ratio":
+                materialization_coverage_ratio,
+
+            "candidate_fact_count":
+                candidate_fact_count,
+
+            "author_result_count":
+                author_result_count,
+
+            "cited_literature_count":
+                cited_literature_count,
+
+            "uncertain_count":
+                uncertain_count,
+
+            "resolved_provenance_count":
+                resolved_provenance_count,
+
+            "provenance_coverage_complete":
+                provenance_coverage_complete,
+
+            "provenance_coverage_ratio":
+                provenance_coverage_ratio,
+
+            "comparable_fact_count":
+                comparable_fact_count,
+
+            "normalization_error_count":
+                normalization_error_count,
 
             "numeric_field":
                 "value",
@@ -779,6 +1118,7 @@ def query_facts(
                 "unit",
         },
     )
+
 
 def update_fact_cache(
     metric: str,
