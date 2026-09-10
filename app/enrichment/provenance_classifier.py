@@ -9,7 +9,7 @@ from app.enrichment.provenance_ontology import (
 
 
 PROVENANCE_CLASSIFIER_VERSION = (
-    "provenance-classifier-v2"
+    "provenance-classifier-v3"
 )
 
 MIN_PROVENANCE_SCORE = 1
@@ -104,6 +104,44 @@ def _serialize_candidates(
     )
 
 
+
+def _merge_ranked_candidates(
+    *rankings: list[
+        tuple[str, int]
+    ],
+) -> list[
+    tuple[str, int]
+]:
+
+    scores: dict[
+        str,
+        int,
+    ] = {}
+
+    for ranking in rankings:
+
+        for (
+            provenance,
+            score,
+        ) in ranking:
+
+            scores[provenance] = max(
+                scores.get(
+                    provenance,
+                    0,
+                ),
+                score,
+            )
+
+    return sorted(
+        scores.items(),
+        key=lambda item: (
+            -item[1],
+            item[0],
+        ),
+    )
+
+
 def classify_provenance(
     row: Mapping[
         str,
@@ -135,6 +173,14 @@ def classify_provenance(
         or ""
     )
 
+    sentence_ranked = (
+        rank_provenance_candidates(
+            sentence_text
+        )
+    )
+
+    context_ranked = []
+
     if (
         context_text
         and
@@ -142,19 +188,17 @@ def classify_provenance(
         != sentence_text
     ):
 
-        text = (
-            sentence_text
-            + " "
-            + context_text
+        context_ranked = (
+            rank_provenance_candidates(
+                context_text,
+                context_safe_only=True,
+            )
         )
 
-    else:
-
-        text = sentence_text
-
     ranked = (
-        rank_provenance_candidates(
-            text
+        _merge_ranked_candidates(
+            sentence_ranked,
+            context_ranked,
         )
     )
 

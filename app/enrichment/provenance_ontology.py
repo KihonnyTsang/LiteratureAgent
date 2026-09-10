@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 
 PROVENANCE_ONTOLOGY_VERSION = (
-    "provenance-ontology-v3"
+    "provenance-ontology-v4"
 )
 
 
@@ -11,6 +11,7 @@ PROVENANCE_ONTOLOGY_VERSION = (
 class ProvenanceRule:
     pattern: str
     weight: int
+    context_safe: bool = True
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ PROVENANCE_ONTOLOGY = {
                     r"(?:"
                     r"measured|measure|"
                     r"obtained|obtain|"
-                    r"achieved|achieve|"
+                    r"achieved|"
                     r"demonstrated|demonstrate|"
                     r"calculated|calculate|"
                     r"observed|observe|"
@@ -69,6 +70,14 @@ PROVENANCE_ONTOLOGY = {
                     r")\b"
                 ),
                 weight=4,
+            ),
+
+            ProvenanceRule(
+                pattern=(
+                    r"\bwe\s+achieve\b"
+                ),
+                weight=4,
+                context_safe=False,
             ),
 
             # Strong possessive current-work evidence.
@@ -273,6 +282,8 @@ def normalize_provenance_text(
 
 def rank_provenance_candidates(
     text: str,
+    *,
+    context_safe_only: bool = False,
 ) -> list[
     tuple[str, int]
 ]:
@@ -296,6 +307,14 @@ def rank_provenance_candidates(
         score = 0
 
         for rule in spec.rules:
+
+            if (
+                context_safe_only
+                and
+                not rule.context_safe
+            ):
+
+                continue
 
             if re.search(
                 rule.pattern,

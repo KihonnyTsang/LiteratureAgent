@@ -420,3 +420,76 @@ def test_external_attribution_in_context_overrides_neutral_sentence():
         result.provenance
         == "cited_literature"
     )
+
+
+def test_same_sentence_we_achieve_remains_author_result():
+
+    result = classify_provenance(
+        make_row(
+            row_id=30,
+            sentence=(
+                "We achieve an output "
+                "value of 10 under the "
+                "reported condition."
+            ),
+        )
+    )
+
+    assert result.status == "classified"
+    assert result.provenance == "author_result"
+
+
+def test_context_only_we_achieve_does_not_promote_target():
+
+    result = classify_provenance(
+        make_row(
+            row_id=31,
+
+            sentence=(
+                "Generally the power output "
+                "from in vivo tests is "
+                "under 1 mW."
+            ),
+
+            context=(
+                "Generally the power output "
+                "from in vivo tests is "
+                "under 1 mW. "
+                "Energy harvesters currently "
+                "face complex hurdles and "
+                "there is a long way to go "
+                "before we achieve "
+                "self-powered operation."
+            ),
+        )
+    )
+
+    assert result.status == "unresolved"
+    assert result.provenance == "uncertain"
+
+
+def test_context_we_demonstrated_can_support_target():
+
+    result = classify_provenance(
+        make_row(
+            row_id=32,
+
+            sentence=(
+                "Moreover, the output power "
+                "of the hybrid generator "
+                "reached 0.31 mW."
+            ),
+
+            context=(
+                "Moreover, the output power "
+                "of the hybrid generator "
+                "reached 0.31 mW. "
+                "Furthermore, we demonstrated "
+                "that the hybrid generator "
+                "can power an LED."
+            ),
+        )
+    )
+
+    assert result.status == "classified"
+    assert result.provenance == "author_result"
