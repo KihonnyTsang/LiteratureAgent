@@ -1,260 +1,143 @@
 # LiteratureAgent
 
-<p align="center">
-  <strong>Scientific Literature Intelligence Agent</strong>
-</p>
+> 面向科研文献的本地 AI Agent：支持文献检索、结构化科研事实抽取、跨论文定量分析、证据追踪、可视化与增量知识库同步。
 
-<p align="center">
-  Grounded RAG · Structured Fact Extraction · Cross-Paper Quantitative Analysis · Scientific Data Validation
-</p>
+![LiteratureAgent Dashboard](docs/images/streamlit-dashboard.png)
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3.11-blue" alt="Python 3.11">
-  <img src="https://img.shields.io/badge/FastAPI-Agent%20API-009688" alt="FastAPI">
-  <img src="https://img.shields.io/badge/Streamlit-Web%20UI-FF4B4B" alt="Streamlit">
-  <img src="https://img.shields.io/badge/Qdrant-Vector%20Store-DC244C" alt="Qdrant">
-  <img src="https://img.shields.io/badge/BGE--M3-Embedding-orange" alt="BGE-M3">
-  <img src="https://img.shields.io/badge/pytest-31%20tests-0A9EDC" alt="31 pytest tests">
+## 项目简介
 
-  <a href="https://github.com/KihonnyTsang/LiteratureAgent/actions/workflows/tests.yml">
-    <img
-      src="https://github.com/KihonnyTsang/LiteratureAgent/actions/workflows/tests.yml/badge.svg"
-      alt="Tests"
-    >
-  </a>
-</p>
+LiteratureAgent 是一个面向科研场景构建的本地文献智能分析系统。
 
-<p align="center">
-  <img
-    src="docs/images/streamlit-dashboard.png"
-    alt="LiteratureAgent Streamlit scientific analysis interface"
-    width="100%"
-  >
-</p>
+与普通“把 PDF 全部塞给大模型”的 RAG Demo 不同，本项目将 **LLM 规划、结构化事实库、确定性计算、证据渲染** 分离：
 
-LiteratureAgent 是一个面向科研论文的智能文献分析 Agent，针对传统 RAG 难以可靠完成的 **跨论文定量分析、科学事实抽取、单位统一和证据追踪** 进行了专门设计。
+- **DeepSeek Planner** 负责把自然语言问题拆解成工具调用计划；
+- **SQLite Structured Facts** 保存可比较的科研指标；
+- **Python / SQLite** 负责排序、聚合、Top-K 等确定性计算；
+- **Qdrant + BGE-M3** 负责语义检索；
+- **DeepSeek Answer Writer** 只接收压缩后的最终结果上下文；
+- **Deterministic Renderer** 输出表格、证据与数据质量提示。
 
-它不仅可以回答：
+对于：
 
-> 为什么加入 BaTiO3 后压电输出会增强？
+> 统计所有论文输出功率的前十名
 
-还可以处理：
-
-> 比较所有论文作者自己报告的功率密度，统一单位后按从高到低排序，并生成图表。
-
-系统会根据任务类型，在语义检索与结构化科学分析之间选择不同执行路径，并通过受约束的 Agent Plan 调用 RAG、Fact、Metadata、Table 和 Plot Tools。
-
----
-
-## Why this is more than a basic RAG demo
-
-传统 RAG 通常执行：
-
-```text
-Question
-→ Global Top-K Retrieval
-→ LLM
-→ Answer
-```
-
-这适合文献问答，但不适合回答：
-
-```text
-“比较所有论文中的某个科学指标”
-```
-
-因为 Global Top-K 无法保证覆盖所有文档，也不能可靠完成物理单位转换、数值排序和来源区分。
-
-LiteratureAgent 对定量任务采用另一条路径：
+系统不会把数百篇论文逐篇交给 LLM，而是执行：
 
 ```text
 User Question
     ↓
-Structured Agent Plan
+DeepSeek Planner
     ↓
-Per-document Scientific Retrieval
+query_facts
     ↓
-LLM Fact Extraction
+aggregate_table
     ↓
-Provenance Classification
+sort_table
     ↓
-Physical Unit Normalization
+limit_table
     ↓
-SQLite Fact Store
+Answer Writer
     ↓
-Deterministic Python Analysis
-    ↓
-Table / Plot / Evidence
+Deterministic Renderer
 ```
 
-核心原则是：
-
-> **LLM handles semantics; deterministic tools handle numbers.**
-
-LLM 负责：
-
-```text
-intent understanding
-planning
-semantic extraction
-scientific language generation
-```
-
-Python / structured tools 负责：
-
-```text
-unit conversion
-filtering
-aggregation
-sorting
-plotting
-numeric validation
-```
-
-因此 LLM 不直接负责跨论文数值计算。
+在线查询阶段主要读取已经物化的结构化事实，避免昂贵的逐论文 LLM 抽取。
 
 ---
 
-## Key Engineering Highlights
+## 核心能力
 
-- **Grounded literature QA** with source-level citation tracking
-- **Per-document structured scientific fact extraction**
-- **Dynamic scientific metric resolution**
-- **Author result vs cited literature provenance separation**
-- **Pint-based dimensionality validation**
-- **Raw scientific value preservation**
-- **Deterministic aggregation, sorting and visualization**
-- **Validated structured Agent Plans**
-- **Typed `TextResult` / `ToolResult` protocols**
-- **Incremental SQLite ↔ Qdrant vector synchronization**
-- **FastAPI application layer**
-- **Streamlit scientific analysis workspace**
-- **31-test pytest regression suite**
+### 1. 文献 RAG 问答
 
----
+支持基于本地 PDF 知识库进行科研问题检索，例如：
 
+```text
+为什么加入 BaTiO3 后压电输出会增强？
+```
 
-## Features
-
-### Grounded Literature QA
-
-针对机制解释、实验现象和论文内容问题，LiteratureAgent 使用：
+查询链路：
 
 ```text
 Question
-→ Semantic Retrieval
-→ Relevant Paper Chunks
-→ Grounded LLM Answer
-→ Source References
+→ DeepSeek Planner
+→ rag_search
+→ Qdrant / BGE-M3
+→ Answer Writer
 ```
 
-回答仅基于检索到的论文上下文，并返回实际被答案采用的文献来源。
+### 2. 跨论文结构化定量分析
 
----
-
-### Structured Scientific Fact Extraction
-
-对于功率密度、能量密度、击穿场强、输出电压、`d33` 等科研指标，系统不是简单从 Top-K chunks 中直接回答，而是执行：
+支持科研指标的跨论文比较，例如：
 
 ```text
-Metric
-→ Per-document Retrieval
-→ LLM Fact Extraction
-→ Evidence Verification
-→ Provenance Classification
-→ Unit Normalization
-→ SQLite Fact Cache
+统计所有论文输出功率的前十名
 ```
-
-每条 Fact 可以记录：
-
-- scalar / range / lower bound / upper bound
-- 原始数值
-- 原始单位
-- 标准化数值
-- 标准单位
-- 页码
-- chunk
-- 实验条件
-- evidence
-- provenance
-- confidence
-- evidence verification state
-
----
-
-### Cross-Paper Quantitative Analysis
-
-对于类似：
-
-> 比较所有论文作者自己报告的功率密度，按从高到低排序，并绘制图表
-
-LiteratureAgent 会执行结构化工具链：
 
 ```text
-query_facts
-→ aggregate_table
-→ sort_table
-→ plot_table
+比较所有论文作者自己报告的功率密度，
+按从高到低排序并绘制图表
 ```
 
-LLM 不负责数值计算。
+系统会优先从 SQLite Structured Facts 中读取标准化数据，再由确定性工具完成：
 
-排序、聚合、单位转换和绘图均由确定性 Python 工具完成。
+- 分组
+- max / min / mean / median / sum / count
+- 排序
+- Top-K
+- 绘图
 
----
+LLM 不负责数学计算。
 
-### Scientific Unit and Dimensionality Safety
+### 3. 科研数值自动扫描
 
-科学文献中经常存在看起来相似、实际上物理量纲不同的数据。
+系统会离线扫描论文中的数值与单位，例如：
 
-例如：
+- V / mV / kV
+- A / μA / mA
+- W / mW / μW
+- Pa / kPa / MPa
+- pC/N
+- W/m²
+- W/m³
+- Hz
+- °C
+- J/cm³
+
+Numeric Scanner 只识别“论文中出现了什么数字”，不直接猜测科研语义。
+
+### 4. Metric Ontology
+
+Numeric Mention 会进一步经过：
 
 ```text
-13.5 mW/cm²
+Raw Number
+→ Unit Signature
+→ Dimensionality Routing
+→ Metric Classification
 ```
 
-属于面积功率密度，可以转换为：
+当前可区分的指标包括：
 
 ```text
-135 W/m²
+power
+output_power
+power_density
+volumetric_power_density
+incident_power_density
+output_voltage
+current
+pressure
+electric_field
+energy_density
+piezoelectric_charge_coefficient
+...
 ```
 
-而：
+这避免仅凭单位把不同物理量混在一起。
 
-```text
-1.48 μW/cm³
-```
+### 5. Provenance-aware Scientific Facts
 
-属于体积功率密度，不能转换为：
-
-```text
-W/m²
-```
-
-LiteratureAgent 对这一问题采用三层防护：
-
-```text
-Semantic Guard
-    ↓
-Fact Extractor 判断目标科学指标是否匹配
-
-Physical Dimensionality Guard
-    ↓
-Pint 检查单位量纲是否可转换
-
-Comparable-value Admission Guard
-    ↓
-转换失败的数据不得进入可比较 numerical field
-```
-
-因此，原始科学事实可以保留，但不兼容量纲的数据不会污染跨论文排名。
-
----
-
-### Provenance-Aware Extraction
-
-LiteratureAgent 区分：
+系统不仅保存数值，还判断该数值属于：
 
 ```text
 author_result
@@ -262,411 +145,291 @@ cited_literature
 uncertain
 ```
 
-例如用户可以分别查询：
+因此可以回答：
 
 ```text
-只比较论文作者自己报告的结果
+只比较各论文作者自己报告的输出功率
 ```
 
-或者：
+而不会把 Review 中引用的其他论文结果误当作当前论文结果。
+
+当 provenance 覆盖不足时，系统会在最终答案中明确显示数据质量提示，而不是把部分结果伪装成完整全库结论。
+
+### 6. Evidence Traceability
+
+结构化结果保留：
+
+- 论文标题
+- 页码
+- 原始数值
+- 标准化数值
+- 单位
+- 原文证据
+- provenance
+- confidence
+- condition text
+
+因此最终结果可以回溯到原始 PDF 证据。
+
+### 7. 一键增量同步知识库
+
+Streamlit 左侧提供：
 
 ```text
-总结所有论文中出现过的 d33，包括引用文献中的数据
+同步知识库
 ```
 
-避免将论文 Background / Related Work 中引用的数字误认为作者自己的实验结果。
+同步流程：
+
+```text
+PDF Library
+    ↓
+NEW / MODIFIED / DELETED / MOVED detection
+    ↓
+Pages
+    ↓
+Chunks
+    ↓
+BGE-M3 Embeddings
+    ↓
+Qdrant
+    ↓
+Numeric Mentions
+    ↓
+Unit Signatures
+    ↓
+Metric Classification
+    ↓
+Deterministic Provenance
+    ↓
+Materialized Structured Facts
+```
+
+增量策略：
+
+- 未变化 PDF 不重新解析；
+- 已存在 Chunks 不重新生成；
+- 已存在向量不重新 Embedding；
+- 已完成 Numeric Scan 的文档直接命中 cache；
+- Metric / Provenance 只处理 pending rows；
+- 删除论文时同步清理派生数据与向量。
+
+Semantic Provenance 不会在普通同步中自动全库执行，避免产生大量不必要的 LLM 调用。
 
 ---
 
-### Agent Planning and Tool Execution
-
-自然语言问题首先由 Planner 转换成结构化 `AgentPlan`。
-
-示例：
-
-```text
-User Question
-    ↓
-Planner
-    ↓
-AgentPlan
-    ↓
-Plan Validator
-    ↓
-Executor
-    ↓
-Tool Registry
-```
-
-当前工具包括：
-
-```text
-rag_search
-query_facts
-query_metadata
-filter_table
-aggregate_table
-sort_table
-plot_table
-```
-
-计划不是任意 Python 代码，而是受约束、可验证的 Tool Plan。
-
----
-
-## Architecture
+## 系统架构
 
 ```mermaid
 flowchart TD
+    U[User] --> UI[Streamlit / CLI]
+    UI --> API[FastAPI]
+    API --> RT[Agent Runtime]
 
-    A[PDF Papers] --> B[PDF Parser]
-    B --> C[Page / Chunk Storage]
-    C --> D[(SQLite)]
+    RT --> P[DeepSeek Planner]
 
-    C --> E[BGE-M3 Embedding]
-    E --> F[(Qdrant)]
+    P --> RAG[rag_search]
+    P --> FACT[query_facts]
+    P --> META[query_metadata]
 
-    Q[User Question] --> P[Agent Planner]
-    P --> V[Plan Validator]
-    V --> X[Executor]
+    RAG --> Q[Qdrant]
+    Q --> EMB[BGE-M3]
 
-    X --> R[RAG Tool]
-    X --> FT[Fact Tool]
-    X --> MT[Metadata Tool]
-    X --> TT[Table Tools]
-    X --> PT[Plot Tool]
+    FACT --> SF[SQLite Structured Facts]
+    META --> DB[SQLite Metadata]
 
-    R --> F
-    R --> LLM[DeepSeek / SiliconFlow]
+    FACT --> AGG[aggregate_table]
+    META --> AGG
 
-    FT --> D
-    FT --> EX[Fact Extractor]
-    EX --> F
-    EX --> LLM
+    AGG --> SORT[sort_table]
+    SORT --> LIMIT[limit_table]
+    LIMIT --> PLOT[plot_table]
 
-    TT --> AC[Answer Context]
-    MT --> AC
-    FT --> AC
-    PT --> AC
+    RAG --> CTX[Answer Context]
+    LIMIT --> CTX
+    PLOT --> CTX
 
-    AC --> AW[Answer Writer]
-    AW --> SG[Numeric Summary Guard]
-    SG --> AR[Deterministic Renderer]
+    CTX --> WRITER[DeepSeek Answer Writer]
+    WRITER --> RENDER[Deterministic Renderer]
 
-    AR --> CLI[CLI]
-    AR --> API[FastAPI]
-    API --> UI[Streamlit UI]
+    RENDER --> OUT[Summary + Table + Evidence + Warnings]
 ```
 
 ---
 
-## Two Answer Protocols
+## Knowledge Base Pipeline
 
-LiteratureAgent 将最终 Agent 输出分为两种协议。
+```mermaid
+flowchart LR
+    PDF[PDF Library]
+    PDF --> INGEST[PDF Ingestion]
+    INGEST --> PAGE[Pages]
+    PAGE --> CHUNK[Chunks]
+    CHUNK --> VECTOR[BGE-M3 Embedding]
+    VECTOR --> QDRANT[Qdrant]
 
-### `grounded_text`
-
-适用于文献问答：
-
-```text
-RAG
-→ TextResult
-→ Answer + Sources
-```
-
-LLM 生成的 grounded answer 被保留，来源由确定性 renderer 展示。
-
-### `structured`
-
-适用于定量分析：
-
-```text
-ToolResult
-→ AnswerContext
-→ Minimal WriterContext
-→ LLM Summary
-→ Numeric Guard
-→ Deterministic Renderer
-```
-
-LLM 只负责编写摘要。
-
-表格、数值、单位、Evidence、Warnings 和 Plot Path 均来自结构化结果。
-
----
-
-## Knowledge Base Lifecycle
-
-`data/papers/` 是论文知识库的 source of truth。
-
-运行：
-
-```bash
-python update_kb.py
-```
-
-系统会执行：
-
-```text
-PDF Scan
-→ NEW / MODIFIED / DELETED / UNCHANGED
-→ SQLite Sync
-→ Chunk Sync
-→ Qdrant Reconciliation
-```
-
-文档通过 content hash 判断是否发生变化。
-
-### Incremental Vector Index
-
-LiteratureAgent 不会每次重新计算全部 Embedding。
-
-系统比较：
-
-```text
-SQLite Chunk IDs
-vs
-Qdrant Point IDs
-```
-
-然后只处理：
-
-```text
-missing points
-stale points
-```
-
-当 SQLite 与 Qdrant 已同步时：
-
-```text
-added = 0
-deleted = 0
-```
-
-并且不会加载 BGE-M3 或调用 `embed_texts()`。
-
-当前测试知识库：
-
-```text
-8 papers
-97 pages
-378 chunks
-378 Qdrant points
+    PAGE --> NUM[Numeric Scanner]
+    NUM --> UNIT[Unit Signature]
+    UNIT --> METRIC[Metric Classifier]
+    METRIC --> PROV[Deterministic Provenance]
+    PROV --> FACTS[Structured Fact Materializer]
+    FACTS --> SQLITE[(SQLite Facts)]
 ```
 
 ---
 
-## Tech Stack
+## 技术栈
 
-### LLM
+| Layer | Technology |
+| --- | --- |
+| LLM Planner / Writer | DeepSeek via SiliconFlow |
+| Agent Runtime | Python |
+| API | FastAPI |
+| UI | Streamlit |
+| Structured Data | SQLite |
+| Vector Database | Qdrant |
+| Embedding | BGE-M3 |
+| PDF Parsing | PyMuPDF |
+| Unit Parsing / Normalization | Pint |
+| Plotting | Matplotlib |
+| Validation | Pydantic |
+| Testing | pytest |
+| CI | GitHub Actions |
 
-- DeepSeek via SiliconFlow
-- OpenAI-compatible API client
-
-### Retrieval
-
-- BGE-M3
-- Sentence Transformers
-- Qdrant
-
-### Data
-
-- SQLite
-- PyMuPDF
-
-### Scientific Processing
-
-- Pint
-- Pydantic
-- Matplotlib
-
-### Agent
-
-- Structured Planner
-- Plan Validator
-- Tool Registry
-- Sequential Executor
-- Typed Result Protocols
-
-### Application
-
-- FastAPI
-- Streamlit
-- CLI
-
-### Testing
-
-- pytest
+主要运行依赖包括 PyMuPDF、sentence-transformers、qdrant-client、OpenAI-compatible client、FastAPI、Streamlit、Pint 与 Matplotlib。
 
 ---
 
-## Project Structure
+## 当前开发快照
+
+截至 2026-09-10，本地开发知识库已验证：
+
+| Item | Count |
+| --- | ---: |
+| PDFs | 331 |
+| Indexed Documents | 329 |
+| Pages | 7,222 |
+| Chunks | 25,458 |
+| Vectors | 25,458 |
+| Materialized Structured Facts | 5,478 |
+
+最近一次 deterministic test suite：
+
+```text
+165 passed
+18 deselected
+```
+
+> 上述数字来自当前本地科研文献库，仅用于展示系统规模，会随着知识库同步继续变化。
+
+---
+
+## 项目结构
 
 ```text
 LiteratureAgent/
 ├── app/
-│   ├── agent/
-│   │   ├── planner.py
-│   │   ├── plan_validator.py
-│   │   ├── executor.py
-│   │   ├── runtime.py
-│   │   ├── answer_context.py
-│   │   ├── answer_writer.py
-│   │   ├── answer_renderer.py
-│   │   └── summary_guard.py
-│   │
-│   ├── api/
-│   │   ├── routes.py
-│   │   ├── schemas.py
-│   │   └── server.py
-│   │
-│   ├── database/
-│   │   ├── sqlite_db.py
-│   │   └── fact_repository.py
-│   │
-│   ├── embedding/
-│   │   ├── embedding_model.py
-│   │   └── indexer.py
-│   │
-│   ├── extraction/
-│   │   ├── fact_extractor.py
-│   │   ├── metric_registry.py
-│   │   ├── metric_resolver.py
-│   │   ├── schemas.py
-│   │   └── unit_normalizer.py
-│   │
-│   ├── ingestion/
-│   │   ├── pdf_parser.py
-│   │   ├── chunker.py
-│   │   ├── ingest.py
-│   │   └── kb_sync.py
-│   │
-│   ├── llm/
-│   │   └── siliconflow_client.py
-│   │
-│   ├── rag/
-│   │   ├── qa.py
-│   │   └── retriever.py
-│   │
-│   ├── tools/
-│   │   ├── fact_tool.py
-│   │   ├── metadata_tool.py
-│   │   ├── plot_tool.py
-│   │   ├── rag_tool.py
-│   │   ├── table_tool.py
-│   │   ├── registry.py
-│   │   └── schemas.py
-│   │
-│   ├── ui/
-│   │   └── streamlit_app.py
-│   │
-│   └── vectorstore/
-│       └── vector_store.py
-│
+│   ├── agent/          # Planner / Executor / Answer pipeline
+│   ├── api/            # FastAPI
+│   ├── database/       # SQLite repositories and schema
+│   ├── embedding/      # BGE-M3 indexing
+│   ├── enrichment/     # numeric / metric / provenance / facts
+│   ├── extraction/     # scientific fact schemas & normalization
+│   ├── ingestion/      # PDF lifecycle and KB sync
+│   ├── llm/            # SiliconFlow / DeepSeek client
+│   ├── rag/            # retrieval pipeline
+│   ├── tools/          # Agent tools
+│   ├── ui/             # Streamlit UI
+│   └── vectorstore/    # Qdrant
 ├── data/
 │   ├── database/
 │   ├── papers/
 │   ├── plots/
 │   └── qdrant/
-│
+├── docs/
+│   └── images/
 ├── models/
 ├── test/
 ├── agent_cli.py
 ├── update_kb.py
-├── pytest.ini
+├── update_numeric_mentions.py
+├── update_unit_signatures.py
+├── update_metric_classifications.py
+├── update_provenance_classifications.py
+├── update_semantic_provenance.py
+├── update_materialized_facts.py
 ├── requirements.txt
 ├── requirements-dev.txt
-├── .env.example
 └── README.md
 ```
 
 ---
 
-## Quick Start
+## 安装
 
-### 1. Create Environment
-
-Python 3.11 is recommended.
+### 1. 创建虚拟环境
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install development dependencies:
+### 2. 安装依赖
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+开发环境：
 
 ```bash
 pip install -r requirements-dev.txt
 ```
 
-For runtime-only installation:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-### 2. Configure LLM API
-
-Copy the environment template:
+### 3. 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+在 `.env` 中配置自己的 API Key 和本地路径。
 
-```dotenv
-SILICONFLOW_API_KEY=your_api_key
-```
-
-Do not commit `.env`.
+请勿将 `.env`、API Key、Token 或私人 PDF 数据提交到 GitHub。
 
 ---
 
-### 3. Prepare Embedding Model
+## 启动
 
-LiteratureAgent expects the local BGE-M3 model under:
-
-```text
-models/bge-m3/
-```
-
-The embedding model is loaded locally through Sentence Transformers.
-
----
-
-### 4. Add Papers
-
-Place PDF papers under:
-
-```text
-data/papers/
-```
-
----
-
-### 5. Build / Synchronize Knowledge Base
+### Terminal 1：FastAPI
 
 ```bash
-python update_kb.py
+uvicorn app.api.server:app --reload
 ```
 
-The command synchronizes:
+API：
 
 ```text
-PDFs
-→ SQLite
-→ Chunks
-→ Qdrant
+http://127.0.0.1:8000
 ```
 
-and performs incremental vector indexing.
+Swagger：
 
----
+```text
+http://127.0.0.1:8000/docs
+```
 
-## Run
+### Terminal 2：Streamlit
+
+```bash
+streamlit run app/ui/streamlit_app.py
+```
+
+浏览器：
+
+```text
+http://localhost:8501
+```
 
 ### CLI
 
@@ -674,350 +437,244 @@ and performs incremental vector indexing.
 python agent_cli.py
 ```
 
-Example:
+示例：
 
 ```text
-按页数从多到少排列所有论文
-```
-
-```text
-为什么加入 BaTiO3 后压电输出会增强？
-```
-
-```text
-比较所有论文作者自己报告的功率密度，
-按从高到低排序，并绘制图表
+请输入问题：统计所有论文输出功率的前十名
 ```
 
 ---
 
-### FastAPI
+## 知识库同步
 
-Start the backend:
+在 Streamlit 左侧点击：
+
+```text
+同步知识库
+```
+
+系统会自动检测：
+
+```text
+NEW
+MODIFIED
+DELETED
+MOVED
+UNCHANGED
+```
+
+并执行增量知识库更新。
+
+可以使用维护脚本检查不同 enrichment 层的状态，例如：
 
 ```bash
-uvicorn app.api.server:app --reload
+python update_materialized_facts.py --stats-only
 ```
 
-Health check:
+---
 
-```text
-GET /health
-```
+## Agent Tooling
 
-Agent endpoint:
+| Tool | Responsibility |
+| --- | --- |
+| `rag_search` | 文献语义检索 |
+| `query_metadata` | 查询文献元数据 |
+| `query_facts` | 查询结构化科研事实 |
+| `aggregate_table` | 分组与统计聚合 |
+| `sort_table` | 确定性排序 |
+| `limit_table` | Top-K / 截断 |
+| `plot_table` | 结果可视化 |
 
-```text
-POST /api/v1/agent/run
-```
+Executor 根据 Planner 生成的 plan 动态调用工具。
 
-Interactive API documentation:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Example request:
+例如：
 
 ```json
 {
-  "question": "按页数从多到少排列所有论文"
+  "steps": [
+    {"tool": "query_facts"},
+    {"tool": "aggregate_table"},
+    {"tool": "sort_table"},
+    {"tool": "limit_table"}
+  ]
 }
 ```
 
 ---
 
-### Streamlit
+## 为什么不直接让 LLM 读取全部论文？
 
-Keep FastAPI running, then start Streamlit in another terminal:
-
-```bash
-streamlit run app/ui/streamlit_app.py
-```
-
-Open:
+对于数百篇论文，如果每次统计都逐篇发送给 LLM：
 
 ```text
-http://localhost:8501
+N papers
+×
+LLM extraction
+×
+每次 query
 ```
 
-The UI communicates with the Agent through HTTP:
+会产生明显的：
+
+- 延迟
+- Token 成本
+- API 调用成本
+- 结果不稳定
+- 数学错误风险
+- provenance 混淆
+
+LiteratureAgent 采用：
 
 ```text
-Browser
-→ Streamlit
-→ FastAPI
-→ Agent Runtime
+Offline Enrichment
+        ↓
+Structured Fact Cache
+        ↓
+Online Deterministic Query
 ```
 
-Streamlit does not directly import Planner, Executor, RAG, or Tools.
+因此结构化统计在线阶段可以直接使用 SQLite 完成，而 LLM 只负责：
+
+1. 理解用户意图；
+2. 生成工具计划；
+3. 对最终结果进行自然语言总结。
 
 ---
 
-## Example Scientific Analysis
+## 数据可信度设计
 
-For:
+科研文献中的数值并不天然等价于“作者结果”。
 
-```text
-比较所有论文作者自己报告的功率密度，
-按从高到低排序
-```
-
-LiteratureAgent can normalize heterogeneous units to `W/m²`.
-
-Example results from the current test corpus:
-
-| Paper | Normalized Power Density |
-|---|---:|
-| Siddiqui et al. | 135 W/m² |
-| Si et al. | 82.2 W/m² |
-| Rana et al. | 0.4102 W/m² |
-| Kim et al. | 0.101 W/m² |
-| Zhang et al. | 0.0875 W/m² |
-
-A volumetric value such as:
+例如一篇 Review 中可能出现：
 
 ```text
-1.48 μW/cm³
+Previous work reported 520 mW ...
 ```
 
-is not admitted into this area-power-density comparison.
+如果不做 provenance，系统可能错误地把 `520 mW` 归到 Review 本身。
+
+因此 LiteratureAgent 显式维护：
+
+```text
+Metric Identity
++
+Normalized Value
++
+Provenance
++
+Evidence
++
+Coverage
+```
+
+当结果覆盖不完整时，Renderer 会输出数据质量 warning，而不是伪造缺失排名。
 
 ---
 
 ## Testing
 
-The project currently contains:
-
-```text
-31 pytest tests
-```
-
-covering:
-
-- API contracts
-- Planner
-- Plan Validator
-- Executor
-- Agent Runtime
-- Answer Context
-- Answer Writer
-- RAG
-- document-scoped retrieval
-- fact extraction
-- fact repository
-- fact tools
-- unit normalization
-- dimensionality safety
-- scientific value rendering
-- table operations
-- aggregation
-- plotting
-- incremental vector indexing
-
-### Deterministic Test Suite
-
-For normal development:
+运行 deterministic tests：
 
 ```bash
+SILICONFLOW_API_KEY=dummy-ci-key \
 python -m pytest test -q \
   -m "not integration and not llm and not slow"
 ```
 
-Current deterministic suite:
-
-```text
-15 passed
-```
-
-### Planner / Real LLM Tests
+检查 whitespace / patch 问题：
 
 ```bash
-python -m pytest test/test_planner.py -q
+git diff --check
 ```
 
-### Integration Tests
+项目包含针对以下模块的回归测试：
 
-Example:
-
-```bash
-python -m pytest test/test_executor.py -q
-```
-
-### Full Test Suite
-
-```bash
-python -m pytest test -q
-```
-
-Some tests make real LLM calls, load BGE-M3, access the local knowledge base, or generate plots, so the complete suite is intentionally slower.
+- Knowledge Base lifecycle
+- Numeric Scanner
+- Unit Signature
+- Metric Ontology
+- Metric Classification
+- Provenance Classification
+- Structured Fact Materializer
+- Cache-only Fact Query
+- Table Operations
+- Top-K
+- Answer Coverage Warning
+- Agent Runtime
+- API / UI contracts
 
 ---
 
-## Test Categories
+## 已实现
 
-The project uses pytest markers:
-
-```text
-integration
-llm
-slow
-```
-
-Examples:
-
-```bash
-python -m pytest test -q -m llm
-```
-
-```bash
-python -m pytest test -q -m integration
-```
-
-```bash
-python -m pytest test -q -m slow
-```
-
----
-
-## Engineering Principles
-
-### LLMs should not perform deterministic numerical work
-
-LLMs are used for:
-
-```text
-intent understanding
-planning
-semantic extraction
-scientific language generation
-```
-
-Python tools are used for:
-
-```text
-unit conversion
-sorting
-aggregation
-filtering
-plotting
-numeric validation
-```
-
----
-
-### Retrieval strategy depends on task type
-
-Normal literature QA:
-
-```text
-global semantic retrieval
-→ Top-K chunks
-→ grounded answer
-```
-
-Cross-paper quantitative analysis:
-
-```text
-iterate documents
-→ document-scoped retrieval
-→ structured extraction
-→ normalized fact store
-→ deterministic analysis
-```
-
-This avoids using a single global Top-K retrieval as a substitute for exhaustive cross-paper analysis.
-
----
-
-### Structured plans instead of arbitrary generated code
-
-The Planner can only select predefined tools with validated arguments.
-
-The LLM is not allowed to generate arbitrary Python for execution.
-
-This improves:
-
-- safety
-- debuggability
-- reproducibility
-- testability
-
----
-
-### Preserve raw scientific evidence
-
-Unit normalization never destroys the original scientific value.
-
-The system retains:
-
-```text
-raw_value
-raw_unit
-evidence
-page_number
-source_chunk
-```
-
-even when normalization fails.
-
----
-
-## Current Limitations
-
-LiteratureAgent is currently designed as a local research prototype.
-
-Current limitations include:
-
-- single-user local deployment
-- synchronous Agent execution
-- no persistent multi-turn conversation state
-- local BGE-M3 model required
-- local SQLite and Qdrant storage
-- extraction quality still depends on source PDF text quality
-- dynamic scientific metrics may require additional validation for domain-specific edge cases
-
-The current Streamlit interface should therefore be interpreted as a scientific analysis workspace rather than a conversational multi-turn assistant.
+- [x] Recursive PDF library ingestion
+- [x] Content-hash based KB reconciliation
+- [x] Incremental Chunk / Vector indexing
+- [x] Qdrant semantic retrieval
+- [x] BGE-M3 local embedding
+- [x] FastAPI backend
+- [x] Streamlit dashboard
+- [x] CLI
+- [x] DeepSeek Agent Planner
+- [x] Dynamic Tool Executor
+- [x] Structured Numeric Mention Scanner
+- [x] Unit Signature cache
+- [x] Metric Ontology
+- [x] Deterministic Metric Classifier
+- [x] Deterministic Provenance Classifier
+- [x] Optional Semantic Provenance cache
+- [x] Structured Fact Materializer
+- [x] Cache-only online Fact Query
+- [x] Generic aggregation / sorting / Top-K
+- [x] Coverage-aware deterministic answer warnings
+- [x] One-click structured knowledge synchronization
+- [x] Deterministic CI test workflow
 
 ---
 
 ## Roadmap
 
-Potential future improvements:
-
-```text
-Dockerized deployment
-Embedding / chunk version tracking
-Conversation sessions
-Async / streaming execution
-Evaluation dataset
-Retrieval metrics
-Fact extraction benchmark
-Human verification workflow
-Additional scientific visualization
-Multi-user deployment
-```
+- [ ] Targeted Semantic Provenance Backfill
+- [ ] 按 metric 定向提升 provenance coverage
+- [ ] 更完整的科研指标 ontology
+- [ ] Local LLM backend
+- [ ] Qdrant Docker deployment for larger libraries
+- [ ] Better experiment-condition extraction
+- [ ] Structured evaluation benchmark
+- [ ] Multi-library / multi-project workspace
 
 ---
 
-## Security
+## Design Principles
 
-API credentials are loaded from:
+**1. LLM 负责理解，不负责确定性数学**
 
-```text
-.env
-```
+排序、聚合和 Top-K 全部由 Python / SQLite 完成。
 
-The repository contains only:
+**2. Online Query 不进行昂贵抽取**
 
-```text
-.env.example
-```
+结构化查询优先读取已经物化的 facts。
 
-Local PDFs, vector databases, SQLite databases, generated plots, model files, and API secrets are excluded through `.gitignore`.
+**3. 科研数据必须保留 evidence**
+
+任何结构化事实都应尽可能追溯到 PDF 页码和原文。
+
+**4. Provenance 是科研数据的一部分**
+
+“这个数字是谁报告的”与“这个数字是多少”同样重要。
+
+**5. 缓存和版本化优先**
+
+Numeric detector、Metric Ontology、Provenance classifier、Materializer 都具有版本语义，避免不同算法版本的数据静默混用。
+
+**6. 不为单个问题硬编码 production logic**
+
+指标、排序、聚合和 Top-K 都通过通用 ontology / tool contract 处理。
 
 ---
 
 ## License
 
-This project is currently intended as a research and engineering portfolio project.
+This project is currently maintained as a research / engineering portfolio project.
+
+If you plan to reuse or redistribute the code, add an explicit open-source license before public release.
