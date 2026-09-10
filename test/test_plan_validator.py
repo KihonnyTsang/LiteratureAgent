@@ -384,3 +384,114 @@ def test_plan_validator():
 
 if __name__ == "__main__":
     test_plan_validator()
+
+
+def test_limit_table_plan_validation():
+
+    valid_plan = AgentPlan(
+        user_goal="取页数最多的前十篇论文",
+
+        steps=[
+            ToolStep(
+                step_id="step_1",
+                tool="query_metadata",
+                arguments={
+                    "fields": [
+                        "title",
+                        "page_count",
+                    ],
+                    "scope":
+                        "all_documents",
+                },
+            ),
+
+            ToolStep(
+                step_id="step_2",
+                tool="sort_table",
+                arguments={
+                    "input_step":
+                        "step_1",
+                    "field":
+                        "page_count",
+                    "order":
+                        "descending",
+                },
+            ),
+
+            ToolStep(
+                step_id="step_3",
+                tool="limit_table",
+                arguments={
+                    "input_step":
+                        "step_2",
+                    "limit":
+                        10,
+                },
+            ),
+        ],
+
+        answer_mode="text_and_table",
+    )
+
+    expect_valid(
+        "metadata -> sort -> limit",
+        valid_plan,
+    )
+
+    missing_input_plan = AgentPlan(
+        user_goal="错误 limit 计划",
+
+        steps=[
+            ToolStep(
+                step_id="step_1",
+                tool="limit_table",
+                arguments={
+                    "limit": 10,
+                },
+            ),
+        ],
+
+        answer_mode="table",
+    )
+
+    expect_invalid(
+        "limit missing input_step",
+        missing_input_plan,
+    )
+
+    wrong_type_plan = AgentPlan(
+        user_goal="错误 limit 类型",
+
+        steps=[
+            ToolStep(
+                step_id="step_1",
+                tool="query_metadata",
+                arguments={
+                    "fields": [
+                        "title",
+                        "page_count",
+                    ],
+                    "scope":
+                        "all_documents",
+                },
+            ),
+
+            ToolStep(
+                step_id="step_2",
+                tool="limit_table",
+                arguments={
+                    "input_step":
+                        "step_1",
+                    "limit":
+                        "10",
+                },
+            ),
+        ],
+
+        answer_mode="table",
+    )
+
+    expect_invalid(
+        "limit wrong type",
+        wrong_type_plan,
+    )

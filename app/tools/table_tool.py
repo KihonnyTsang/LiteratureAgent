@@ -709,3 +709,70 @@ def sort_table(
                 order,
         },
     )
+
+
+def limit_table(
+    input_table: ToolResult,
+    limit: int,
+) -> ToolResult:
+    """
+    保留任意 ToolResult 当前顺序中的前 N 行。
+
+    本工具只负责截断，不负责排序。
+    因此 Top-N / 前 N 名应先由 sort_table
+    确定顺序，再调用 limit_table。
+    """
+
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+    ):
+        raise TypeError(
+            "limit 必须是整数。"
+        )
+
+    if limit <= 0:
+        raise ValueError(
+            "limit 必须大于 0。"
+        )
+
+    input_row_count = len(
+        input_table.rows
+    )
+
+    limited_rows = list(
+        input_table.rows[:limit]
+    )
+
+    return ToolResult(
+        columns=list(
+            input_table.columns
+        ),
+
+        rows=limited_rows,
+
+        column_specs=[
+            spec.model_copy(
+                deep=True
+            )
+            for spec
+            in input_table.column_specs
+        ],
+
+        metadata={
+            **input_table.metadata,
+
+            "limit":
+                limit,
+
+            "pre_limit_row_count":
+                input_row_count,
+
+            "post_limit_row_count":
+                len(limited_rows),
+
+            "truncated":
+                input_row_count
+                > limit,
+        },
+    )

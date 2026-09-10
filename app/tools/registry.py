@@ -5,6 +5,7 @@ from app.tools.metadata_tool import (
 from app.tools.table_tool import (
     sort_table,
     aggregate_table,
+    limit_table,
 )
 
 from app.tools.plot_tool import (
@@ -29,6 +30,9 @@ TOOL_REGISTRY = {
 
     "aggregate_table":
         aggregate_table,
+
+    "limit_table":
+        limit_table,
 
     "plot_table":
         plot_table,

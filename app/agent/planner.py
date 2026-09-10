@@ -139,7 +139,7 @@ raw_unit
 
 也不要使用：
 
-"normalized_value"
+"value"
 
 因为 query_facts 的标准数学字段统一叫：
 
@@ -229,7 +229,7 @@ plot_table。
   "input_step": "step_1",
   "conditions": [
     {
-      "field": "normalized_value",
+      "field": "value",
       "operator": ">",
       "value": 1
     }
@@ -260,7 +260,7 @@ plot_table。
 {
   "input_step": "step_1",
   "group_by": "document_id",
-  "field": "normalized_value",
+  "field": "value",
   "operation": "max"
 }
 
@@ -317,13 +317,52 @@ group_by 可以是一个字段：
 
 {
   "input_step": "step_2",
-  "field": "normalized_value",
+  "field": "value",
   "order": "descending"
 }
 
 
 ==================================================
-7. plot_table
+7. limit_table
+==================================================
+
+用途：
+保留输入表当前顺序中的前 N 行。
+
+适合：
+
+- 前 10 名
+- Top 20
+- 排名前 N
+- 排序后只保留指定数量的结果
+
+参数示例：
+
+{
+  "input_step": "step_3",
+  "limit": 10
+}
+
+非常重要：
+
+limit_table 只负责截断，
+不会自行排序。
+
+因此排名类请求必须先：
+
+sort_table
+
+然后再：
+
+limit_table。
+
+如果输入表少于 N 行，
+直接返回现有全部行，
+不能补齐或编造数据。
+
+
+==================================================
+8. plot_table
 ==================================================
 
 用途：
@@ -419,6 +458,7 @@ def infer_answer_mode(
         "filter_table",
         "aggregate_table",
         "sort_table",
+        "limit_table",
     }
 
     if tools & table_tools:
@@ -535,7 +575,7 @@ def create_plan(
       "tool": "sort_table",
       "arguments": {
         "input_step": "step_1",
-        "field": "normalized_value",
+        "field": "value",
         "order": "descending"
       },
       "description": "按照标准化数值从高到低排序"
@@ -638,6 +678,59 @@ def create_plan(
     → aggregate_table
     → sort_table
     → plot_table
+
+
+    18. 如果用户要求：
+
+    “前 N 名”
+    “Top N”
+    “排名前 N”
+    “前十名”
+    “前二十名”
+
+    必须把 N 作为 limit_table 的 limit 参数。
+
+    对跨论文科研指标排名，
+    一篇论文可能存在多个目标 Fact。
+    除非用户明确指定其他聚合方式，
+    应先按：
+
+    [
+      "document_id",
+      "title"
+    ]
+
+    使用 aggregate_table，
+    field="value"，
+    operation="max"，
+
+    再使用 sort_table。
+
+    数值排名中的“前 N / Top N”
+    如果用户没有明确要求最低值或最小值，
+    默认按：
+
+    field="value"
+    order="descending"
+
+    然后：
+
+    limit_table(
+      limit=N
+    )
+
+    因此典型流程是：
+
+    query_facts
+    → aggregate_table
+    → sort_table
+    → limit_table
+
+    limit_table 必须位于 sort_table 之后。
+
+    如果最终可信数据不足 N 行，
+    返回现有全部结果，
+    不得为了凑够 N 行而编造数据。
 
     ==================================================
     输出规则

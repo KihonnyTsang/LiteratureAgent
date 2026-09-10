@@ -21,6 +21,7 @@ class ToolStep(BaseModel):
         "filter_table",
         "aggregate_table",
         "sort_table",
+        "limit_table",
         "plot_table",
     ]
 
